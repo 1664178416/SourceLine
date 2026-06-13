@@ -1,0 +1,21 @@
+{
+  "llm": {
+    "provider": "mock"
+  },
+  "search": {
+    "provider": "local",
+    "sources": "examples/sources",
+    "maxResultsPerClaim": 3
+  },
+  "checks": {
+    "maxClaims": 10,
+    "minConfidence": 0.65,
+    "failOn": "never"
+  },
+  "providers": {
+    "timeoutMs": 30000
+  },
+  "reports": {
+    "defaultFormat": "markdown"
+  }
+}

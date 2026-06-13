@@ -1,0 +1,186 @@
+name: SourceLine
+description: Generate claim-by-claim evidence reports for files or web pages.
+
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  input:
+    description: Markdown/txt/HTML file or http(s) URL to check.
+    required: true
+  report:
+    description: Report format: terminal, markdown, json, or html. Leave empty to use config; defaults to markdown when no config is supplied.
+    required: false
+    default: ""
+  output:
+    description: Report output path.
+    required: false
+    default: sourceline-report.md
+  config:
+    description: Path to sourceline.config.json.
+    required: false
+    default: ""
+  provider:
+    description: LLM provider: mock or openai. Leave empty to use config, env, or CLI defaults.
+    required: false
+    default: ""
+  base-url:
+    description: OpenAI-compatible base URL.
+    required: false
+    default: ""
+  model:
+    description: OpenAI-compatible model.
+    required: false
+    default: ""
+  search:
+    description: Search provider: mock, local, tavily, or brave. Leave empty to use config, env, or CLI defaults.
+    required: false
+    default: ""
+  sources:
+    description: Local Markdown/txt/HTML source folder when search is local.
+    required: false
+    default: ""
+  max-claims:
+    description: Maximum claims to extract.
+    required: false
+    default: ""
+  max-results:
+    description: Maximum evidence results per claim.
+    required: false
+    default: ""
+  min-confidence:
+    description: Minimum confidence threshold between 0 and 1.
+    required: false
+    default: ""
+  provider-timeout-ms:
+    description: Remote provider request timeout in milliseconds.
+    required: false
+    default: ""
+  allow-cloud:
+    description: Set true to pass --yes for cloud providers.
+    required: false
+    default: "false"
+  fail-on:
+    description: Gate level: never, review, unsupported, or contradicted. Leave empty to use config, env, or CLI defaults.
+    required: false
+    default: ""
+  extra-args:
+    description: Additional SourceLine CLI arguments, one argument per line.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: corepack pnpm install --frozen-lockfile
+
+    - name: Build SourceLine
+      shell: bash
+      run: corepack pnpm run build
+
+    - name: Run SourceLine
+      shell: bash
+      env:
+        SOURCELINE_INPUT: ${{ inputs.input }}
+        SOURCELINE_REPORT: ${{ inputs.report }}
+        SOURCELINE_OUTPUT: ${{ inputs.output }}
+        SOURCELINE_CONFIG_INPUT: ${{ inputs.config }}
+        SOURCELINE_PROVIDER: ${{ inputs.provider }}
+        SOURCELINE_BASE_URL_INPUT: ${{ inputs.base-url }}
+        SOURCELINE_MODEL_INPUT: ${{ inputs.model }}
+        SOURCELINE_SEARCH: ${{ inputs.search }}
+        SOURCELINE_SOURCES_INPUT: ${{ inputs.sources }}
+        SOURCELINE_MAX_CLAIMS_INPUT: ${{ inputs.max-claims }}
+        SOURCELINE_MAX_RESULTS_INPUT: ${{ inputs.max-results }}
+        SOURCELINE_MIN_CONFIDENCE_INPUT: ${{ inputs.min-confidence }}
+        SOURCELINE_PROVIDER_TIMEOUT_MS_INPUT: ${{ inputs.provider-timeout-ms }}
+        SOURCELINE_ALLOW_CLOUD_INPUT: ${{ inputs.allow-cloud }}
+        SOURCELINE_FAIL_ON_INPUT: ${{ inputs.fail-on }}
+        SOURCELINE_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        set -euo pipefail
+
+        trim_input() {
+          local value="$1"
+          value="${value#"${value%%[![:space:]]*}"}"
+          value="${value%"${value##*[![:space:]]}"}"
+          printf '%s' "$value"
+        }
+
+        sourceline_input="$(trim_input "$SOURCELINE_INPUT")"
+        sourceline_output="$(trim_input "$SOURCELINE_OUTPUT")"
+        sourceline_config="$(trim_input "$SOURCELINE_CONFIG_INPUT")"
+        sourceline_report="$(trim_input "$SOURCELINE_REPORT")"
+        sourceline_provider="$(trim_input "$SOURCELINE_PROVIDER")"
+        sourceline_base_url="$(trim_input "$SOURCELINE_BASE_URL_INPUT")"
+        sourceline_model="$(trim_input "$SOURCELINE_MODEL_INPUT")"
+        sourceline_search="$(trim_input "$SOURCELINE_SEARCH")"
+        sourceline_sources="$(trim_input "$SOURCELINE_SOURCES_INPUT")"
+        sourceline_max_claims="$(trim_input "$SOURCELINE_MAX_CLAIMS_INPUT")"
+        sourceline_max_results="$(trim_input "$SOURCELINE_MAX_RESULTS_INPUT")"
+        sourceline_min_confidence="$(trim_input "$SOURCELINE_MIN_CONFIDENCE_INPUT")"
+        sourceline_provider_timeout_ms="$(trim_input "$SOURCELINE_PROVIDER_TIMEOUT_MS_INPUT")"
+        sourceline_allow_cloud="$(trim_input "$SOURCELINE_ALLOW_CLOUD_INPUT")"
+        sourceline_fail_on="$(trim_input "$SOURCELINE_FAIL_ON_INPUT")"
+
+        args=(
+          "packages/cli/dist/index.js"
+          "check"
+          "$sourceline_input"
+          "--out"
+          "$sourceline_output"
+        )
+        if [ -n "$sourceline_config" ]; then
+          args+=("--config" "$sourceline_config")
+        fi
+        if [ -n "$sourceline_report" ]; then
+          args+=("--report" "$sourceline_report")
+        elif [ -z "$sourceline_config" ]; then
+          args+=("--report" "markdown")
+        fi
+        if [ -n "$sourceline_provider" ]; then
+          args+=("--provider" "$sourceline_provider")
+        fi
+        if [ -n "$sourceline_base_url" ]; then
+          args+=("--base-url" "$sourceline_base_url")
+        fi
+        if [ -n "$sourceline_model" ]; then
+          args+=("--model" "$sourceline_model")
+        fi
+        if [ -n "$sourceline_search" ]; then
+          args+=("--search" "$sourceline_search")
+        fi
+        if [ -n "$sourceline_sources" ]; then
+          args+=("--sources" "$sourceline_sources")
+        fi
+        if [ -n "$sourceline_max_claims" ]; then
+          args+=("--max-claims" "$sourceline_max_claims")
+        fi
+        if [ -n "$sourceline_max_results" ]; then
+          args+=("--max-results" "$sourceline_max_results")
+        fi
+        if [ -n "$sourceline_min_confidence" ]; then
+          args+=("--min-confidence" "$sourceline_min_confidence")
+        fi
+        if [ -n "$sourceline_provider_timeout_ms" ]; then
+          args+=("--provider-timeout-ms" "$sourceline_provider_timeout_ms")
+        fi
+        if [ "$sourceline_allow_cloud" = "true" ]; then
+          args+=("--yes")
+        fi
+        if [ -n "$sourceline_fail_on" ]; then
+          args+=("--fail-on" "$sourceline_fail_on")
+        fi
+        extra_args=()
+        if [ -n "$SOURCELINE_EXTRA_ARGS" ]; then
+          while IFS= read -r extra_arg; do
+            trimmed_extra_arg="$(trim_input "$extra_arg")"
+            if [ -n "$trimmed_extra_arg" ]; then
+              extra_args+=("$trimmed_extra_arg")
+            fi
+          done <<< "$SOURCELINE_EXTRA_ARGS"
+        fi
+        node "${args[@]}" "${extra_args[@]}"

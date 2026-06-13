@@ -1,0 +1,35 @@
+{
+  "name": "sourceline-workspace",
+  "version": "0.0.0",
+  "description": "SourceLine turns AI answers and documents into claim-by-claim evidence reports.",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "evidence",
+    "fact-checking",
+    "verification",
+    "citations",
+    "cli"
+  ],
+  "scripts": {
+    "build": "corepack pnpm -r --sort build",
+    "check": "corepack pnpm run build && corepack pnpm -r --sort typecheck",
+    "test": "vitest run",
+    "dev": "tsx packages/cli/src/index.ts",
+    "sourceline": "node packages/cli/dist/index.js",
+    "release:verify-manifests": "node scripts/verify-workspace-manifests.mjs && node scripts/verify-action-manifest.mjs",
+    "release:verify-tarball": "node scripts/verify-cli-tarball.mjs .tmp-pack",
+    "release:check": "node -e \"require('node:fs').mkdirSync('.tmp-pack',{recursive:true})\" && corepack pnpm run release:verify-manifests && corepack pnpm run check && corepack pnpm test && corepack pnpm --filter sourceline pack --pack-destination .tmp-pack && corepack pnpm run release:verify-tarball"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

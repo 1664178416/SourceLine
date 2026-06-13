@@ -1,0 +1,35 @@
+{
+  "name": "@sourceline/providers",
+  "version": "0.0.0",
+  "description": "LLM and search providers for SourceLine.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "sourceline",
+    "search",
+    "llm",
+    "evidence"
+  ],
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sourceline/core": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

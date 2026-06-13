@@ -1,0 +1,36 @@
+{
+  "name": "sourceline",
+  "version": "0.0.0",
+  "description": "CLI for generating claim-by-claim SourceLine evidence reports.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "sourceline",
+    "evidence",
+    "fact-checking",
+    "verification",
+    "cli"
+  ],
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "sourceline": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sourceline/config": "workspace:*",
+    "@sourceline/core": "workspace:*",
+    "@sourceline/providers": "workspace:*",
+    "@sourceline/report": "workspace:*",
+    "commander": "^14.0.0",
+    "picocolors": "^1.1.1"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@sourceline/core",
+  "version": "0.0.0",
+  "description": "Core SourceLine pipeline types, normalization, segmentation, and verification orchestration.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "sourceline",
+    "evidence",
+    "verification"
+  ],
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.turbo/
+.env
+.env.*
+!.env.example
+.sourceline/
+*.log
+.tmp*/
+sourceline-report.md
+sourceline-report.json
+sourceline-report.html
+sourceline-*-report.md
+sourceline-*-report.json
+sourceline-*-report.html

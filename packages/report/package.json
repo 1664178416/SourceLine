@@ -1,0 +1,34 @@
+{
+  "name": "@sourceline/report",
+  "version": "0.0.0",
+  "description": "Terminal, Markdown, JSON, and HTML report renderers for SourceLine.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "sourceline",
+    "report",
+    "markdown",
+    "html"
+  ],
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sourceline/core": "workspace:*"
+  }
+}
