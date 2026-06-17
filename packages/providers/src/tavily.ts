@@ -1,5 +1,5 @@
 import type { SearchProvider, SearchResult } from "@sourceline/core";
-import { finiteNumber, normalizeHttpUrl, normalizeOptionalText, normalizeSearchRequest } from "./search-utils.js";
+import { finiteNumber, normalizeHttpUrl, normalizeIdentifierPart, normalizeOptionalText, normalizeSearchRequest } from "./search-utils.js";
 import { z } from "zod";
 import {
   fetchWithTimeout,
@@ -7,10 +7,16 @@ import {
   normalizeRequestTimeoutMs,
   normalizeRequiredStringConfig,
   parseJsonResponse,
-  readErrorResponseBody
+  readErrorResponseBody,
+  redactBearerTokens
 } from "./request-utils.js";
 
 const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
+const MAX_RESULT_TITLE_CHARS = 2_000;
+const MAX_RESULT_SNIPPET_CHARS = 2_000;
+const MAX_RESULT_TEXT_CHARS = 20_000;
+const TAVILY_SEARCH_DEPTHS = new Set(["basic", "advanced", "fast", "ultra-fast"]);
+const TAVILY_RAW_CONTENT_OPTIONS = new Set(["markdown", "text"]);
 
 export type TavilySearchProviderOptions = {
   apiKey?: string;
@@ -40,6 +46,8 @@ export function createTavilySearchProvider(options: TavilySearchProviderOptions 
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
   const timeoutMs = normalizeRequestTimeoutMs(options.timeoutMs);
+  const searchDepth = normalizeTavilySearchDepth(options.searchDepth);
+  const includeRawContent = normalizeTavilyRawContentOption(options.includeRawContent);
 
   return {
     name: "tavily",
@@ -58,8 +66,8 @@ export function createTavilySearchProvider(options: TavilySearchProviderOptions 
         body: JSON.stringify({
           query: request.query,
           max_results: request.maxResults,
-          search_depth: options.searchDepth ?? "basic",
-          include_raw_content: options.includeRawContent ?? false,
+          search_depth: searchDepth,
+          include_raw_content: includeRawContent,
           include_answer: false,
           include_images: false
         })
@@ -71,11 +79,12 @@ export function createTavilySearchProvider(options: TavilySearchProviderOptions 
       });
 
       if (!response.ok) {
-        const body = await readErrorResponseBody(response, redactSecrets);
+        const body = await readErrorResponseBody(response, redactSecrets, { timeoutMs });
         throw new Error(`Tavily search returned ${response.status}: ${body}`);
       }
 
-      const parsed = await parseJsonResponse(response, tavilyResponseSchema, "Tavily search");
+      const parsed = await parseJsonResponse(response, tavilyResponseSchema, "Tavily search", { timeoutMs });
+      const claimId = normalizeIdentifierPart(query.claimId, "claim");
 
       return parsed.results
         .map((result, index): SearchResult | undefined => {
@@ -85,17 +94,17 @@ export function createTavilySearchProvider(options: TavilySearchProviderOptions 
           }
 
           const rank = index + 1;
-          const title = normalizeOptionalText(result.title, { collapseWhitespace: true }) ?? url;
-          const content = normalizeOptionalText(result.content, { collapseWhitespace: true });
-          const rawContent = normalizeOptionalText(result.raw_content);
-          const snippet = content ?? rawContent ?? "";
+          const title = normalizeOptionalText(result.title, { collapseWhitespace: true, maxLength: MAX_RESULT_TITLE_CHARS }) ?? url;
+          const content = normalizeOptionalText(result.content, { collapseWhitespace: true, maxLength: MAX_RESULT_SNIPPET_CHARS });
+          const rawContent = normalizeOptionalText(result.raw_content, { maxLength: MAX_RESULT_TEXT_CHARS });
+          const snippet = content ?? normalizeOptionalText(rawContent, { collapseWhitespace: true, maxLength: MAX_RESULT_SNIPPET_CHARS }) ?? "";
           if (snippet.length === 0) {
             return undefined;
           }
           const score = finiteNumber(result.score);
 
           return {
-            id: `tavily-${query.claimId}-${rank}`,
+            id: `tavily-${claimId}-${rank}`,
             title,
             url,
             retrievedAt: now().toISOString(),
@@ -107,13 +116,37 @@ export function createTavilySearchProvider(options: TavilySearchProviderOptions 
             query: request.query
           };
         })
-        .filter((result): result is SearchResult => result !== undefined);
+        .filter((result): result is SearchResult => result !== undefined)
+        .slice(0, request.maxResults);
     }
   };
 }
 
 function redactSecrets(value: string): string {
-  return value.replace(/tvly-[A-Za-z0-9_-]+/g, "tvly-***");
+  return redactBearerTokens(value).replace(/tvly-[A-Za-z0-9_-]+/g, "tvly-***");
+}
+
+function normalizeTavilySearchDepth(value: TavilySearchProviderOptions["searchDepth"] | undefined): string {
+  const normalized = value ?? "basic";
+  if (!TAVILY_SEARCH_DEPTHS.has(normalized)) {
+    throw new Error("Tavily searchDepth must be one of: basic, advanced, fast, ultra-fast.");
+  }
+
+  return normalized;
+}
+
+function normalizeTavilyRawContentOption(value: TavilySearchProviderOptions["includeRawContent"] | undefined): boolean | string {
+  if (value === undefined) {
+    return false;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (TAVILY_RAW_CONTENT_OPTIONS.has(value)) {
+    return value;
+  }
+
+  throw new Error("Tavily includeRawContent must be a boolean, markdown, or text.");
 }
 
 function normalizeApiKey(value: string | undefined, message: string): string {

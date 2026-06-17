@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,119 @@ describe("verify-action-manifest", () => {
       expect(result.stderr).toContain("must not pass untrimmed extra-args lines to the CLI");
     });
   });
+
+  it("rejects manifests that do not fail blank required input after trimming", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(
+        actionPath,
+        validActionManifest().replace(
+          '        if [ -z "$sourceline_input" ]; then\n          echo "::error::SourceLine input is required after trimming whitespace." >&2\n          exit 1\n        fi\n',
+          ""
+        ),
+        "utf8"
+      );
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("must reject blank required input after trimming");
+      expect(result.stderr).toContain("must explain blank required input failures");
+    });
+  });
+
+  it("rejects manifests that pass --yes without the allow-cloud gate", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(
+        actionPath,
+        validActionManifest().replace(
+          '        if [ "$sourceline_allow_cloud" = "true" ]; then\n          args+=("--yes")\n        fi\n',
+          '        args+=("--yes")\n'
+        ),
+        "utf8"
+      );
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("action.yml must pass --yes only when allow-cloud is true.");
+    });
+  });
+
+  it("rejects manifests that do not enable strict shell mode", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(actionPath, validActionManifest().replace("        set -euo pipefail\n\n", ""), "utf8");
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("action.yml must enable strict shell mode with set -euo pipefail.");
+    });
+  });
+
+  it("rejects manifests that invoke the CLI through eval", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(
+        actionPath,
+        validActionManifest().replace(
+          '        node "${args[@]}" "${extra_args[@]}"\n',
+          '        eval "node ${args[*]} ${extra_args[*]}"\n'
+        ),
+        "utf8"
+      );
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("action.yml must invoke node with quoted argument arrays.");
+      expect(result.stderr).toContain("action.yml must not invoke SourceLine through eval.");
+    });
+  });
+
+  it("rejects manifests that invoke the CLI through a shell command string", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(
+        actionPath,
+        validActionManifest().replace('        node "${args[@]}" "${extra_args[@]}"\n', '        bash -c "node sourceline"\n'),
+        "utf8"
+      );
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("action.yml must invoke node with quoted argument arrays.");
+      expect(result.stderr).toContain("action.yml must not invoke SourceLine through bash -c or sh -c.");
+    });
+  });
+
+  it("rejects action manifest paths that are not regular files", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await mkdir(actionPath);
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Action manifest must be a file:");
+    });
+  });
+
+  it("rejects oversized action manifests before reading them", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, "action.yml");
+      await writeFile(actionPath, "");
+      await truncate(actionPath, 1_000_001);
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Action manifest is larger than 1000000 bytes.");
+    });
+  });
 });
 
 async function withTempDir(callback) {
@@ -105,6 +218,8 @@ runs:
         SOURCELINE_FAIL_ON_INPUT: \${{ inputs.fail-on }}
         SOURCELINE_EXTRA_ARGS: \${{ inputs.extra-args }}
       run: |
+        set -euo pipefail
+
         trim_input() {
           local value="$1"
           value="\${value#"\${value%%[![:space:]]*}"}"
@@ -126,6 +241,10 @@ runs:
         sourceline_provider_timeout_ms="$(trim_input "$SOURCELINE_PROVIDER_TIMEOUT_MS_INPUT")"
         sourceline_allow_cloud="$(trim_input "$SOURCELINE_ALLOW_CLOUD_INPUT")"
         sourceline_fail_on="$(trim_input "$SOURCELINE_FAIL_ON_INPUT")"
+        if [ -z "$sourceline_input" ]; then
+          echo "::error::SourceLine input is required after trimming whitespace." >&2
+          exit 1
+        fi
         args=("packages/cli/dist/index.js" "check" "$sourceline_input" "--out" "$sourceline_output")
         args+=("--config" "$sourceline_config")
         args+=("--report" "$sourceline_report")
@@ -138,7 +257,9 @@ runs:
         args+=("--max-results" "$sourceline_max_results")
         args+=("--min-confidence" "$sourceline_min_confidence")
         args+=("--provider-timeout-ms" "$sourceline_provider_timeout_ms")
-        args+=("--yes")
+        if [ "$sourceline_allow_cloud" = "true" ]; then
+          args+=("--yes")
+        fi
         args+=("--fail-on" "$sourceline_fail_on")
         extra_args=()
         if [ -n "$SOURCELINE_EXTRA_ARGS" ]; then

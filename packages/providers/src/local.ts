@@ -1,10 +1,30 @@
-import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import type { SearchProvider, SearchResult } from "@sourceline/core";
+import { normalizeOptionalText, normalizeSearchRequest } from "./search-utils.js";
 
 const SUPPORTED_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".html", ".htm"]);
-const LOCAL_INDEX_CACHE_VERSION = 3;
+const LOCAL_INDEX_CACHE_VERSION = 5;
 const LOCAL_INDEX_CACHE_PATH = join(".sourceline", "cache", "local-index.json");
+const MAX_LOCAL_SOURCE_BYTES = 2_000_000;
+const MAX_LOCAL_SOURCE_FILES = 5_000;
+const MAX_LOCAL_SOURCE_TOTAL_BYTES = 20_000_000;
+const MAX_LOCAL_CACHE_BYTES = 50_000_000;
+const MAX_IGNORE_FILE_BYTES = 1_000_000;
+const MAX_IGNORE_PATTERN_CHARS = 1_000;
+const MAX_IGNORE_RULES = 1_000;
+const MAX_LOCAL_SEARCH_QUERY_CHARS = 500;
+const MAX_LOCAL_ROOT_DIR_CHARS = 2_000;
+const MAX_LOCAL_DIRECTORY_DEPTH = 64;
+const MAX_LOCAL_RESULT_TITLE_CHARS = 2_000;
+const MAX_LOCAL_RESULT_PATH_CHARS = 2_000;
+const MAX_LOCAL_RESULT_SNIPPET_CHARS = 2_000;
+const MAX_LOCAL_RESULT_TEXT_CHARS = 20_000;
+const MAX_LOCAL_RETRIEVAL_EXPLANATION_CHARS = 4_000;
+const MAX_LOCAL_MATCHED_TERMS = 50;
+const LOCAL_SOURCE_READ_CHUNK_BYTES = 64_000;
+const cacheWriteLocks = new Map<string, Promise<void>>();
 
 export type LocalSearchProviderOptions = {
   rootDir: string;
@@ -22,6 +42,9 @@ export type LocalIndexCacheInfo = {
   cacheBytes: number;
   sourceFiles: number;
   sourceBytes: number;
+  skippedSourceFiles: number;
+  skippedOversizedSourceFiles: number;
+  skippedOverBudgetSourceFiles: number;
   entries: number;
   currentEntries: number;
   staleEntries: number;
@@ -69,7 +92,18 @@ type SourceFileMetadata = {
   relativePath: string;
   mtimeMs: number;
   size: number;
+  contentHash?: string;
+  documentHash?: string;
+  source?: ParsedSourceText;
+  skipReason?: SourceFileSkipReason;
 };
+
+type ParsedSourceText = {
+  text: string;
+  title?: string;
+};
+
+type SourceFileSkipReason = "oversized" | "source_budget";
 
 type CachedLocalIndex = {
   schemaVersion: typeof LOCAL_INDEX_CACHE_VERSION;
@@ -80,6 +114,8 @@ type CachedSourceEntry = {
   relativePath: string;
   mtimeMs: number;
   size: number;
+  contentHash: string;
+  documentHash: string;
   document: CachedIndexedDocument;
 };
 
@@ -130,9 +166,15 @@ export function createLocalSearchProvider(options: LocalSearchProviderOptions): 
   return {
     name: "local",
     async search(query) {
+      const request = normalizeSearchRequest(query.query, query.maxResults);
+      if (!request) {
+        return [];
+      }
+
       indexPromise ??= buildIndex(rootDir);
       const index = await indexPromise;
-      const queryTokens = tokenize(query.query);
+      const normalizedQuery = request.query;
+      const queryTokens = tokenize(normalizedQuery);
       const uniqueQueryTokens = Array.from(new Set(queryTokens));
       const queryPhrases = buildQueryPhrases(queryTokens);
 
@@ -151,27 +193,43 @@ export function createLocalSearchProvider(options: LocalSearchProviderOptions): 
         })
         .filter((item) => item.score.value > 0)
         .sort(compareScoredChunks)
-        .slice(0, query.maxResults)
+        .slice(0, request.maxResults)
         .map((item, index): SearchResult => {
           const rank = index + 1;
-          const path = relative(process.cwd(), item.document.path).replace(/\\/g, "/");
-          const snippet = buildSnippet(item.chunk.text, item.score.matchedTerms);
+          const rawPath = relative(process.cwd(), item.document.path).replace(/\\/g, "/");
+          const path = normalizeLocalOutputText(rawPath, MAX_LOCAL_RESULT_PATH_CHARS) ?? item.document.id;
+          const snippet = normalizeLocalOutputText(
+            buildSnippet(item.chunk.text, item.score.matchedTerms),
+            MAX_LOCAL_RESULT_SNIPPET_CHARS,
+            true
+          ) ?? "";
+          const text = normalizeLocalOutputText(item.chunk.text, MAX_LOCAL_RESULT_TEXT_CHARS) ?? "";
+          const explanation = normalizeLocalOutputText(
+            item.score.explanation,
+            MAX_LOCAL_RETRIEVAL_EXPLANATION_CHARS,
+            true
+          );
 
           return {
             id: `${item.document.id}#${item.chunk.id}`,
-            title: `${item.document.title} lines ${item.chunk.startLine}-${item.chunk.endLine}`,
+            title:
+              normalizeLocalOutputText(
+                `${item.document.title} lines ${item.chunk.startLine}-${item.chunk.endLine}`,
+                MAX_LOCAL_RESULT_TITLE_CHARS,
+                true
+              ) ?? path,
             path,
             retrievedAt: now().toISOString(),
             snippet,
-            text: item.chunk.text,
+            text,
             retrieval: {
               score: roundScore(item.score.value),
-              matchedTerms: item.score.matchedTerms,
-              explanation: item.score.explanation
+              matchedTerms: normalizeLocalMatchedTerms(item.score.matchedTerms),
+              ...(explanation === undefined ? {} : { explanation })
             },
             provider: "local",
             rank,
-            query: query.query
+            query: normalizedQuery
           };
         });
     }
@@ -183,7 +241,11 @@ export async function getLocalIndexCacheInfo(options: { rootDir: string }): Prom
   const ignoreRules = await loadIgnoreRules(rootDir);
   const files = await listSourceFiles(rootDir, ignoreRules);
   const sourceFiles = await readSourceFileMetadata(rootDir, files);
-  const sourceFilesByPath = new Map(sourceFiles.map((file) => [file.relativePath, file]));
+  const indexableSourceFiles = sourceFiles.filter(isIndexableSourceFile);
+  const skippedSourceFiles = sourceFiles.length - indexableSourceFiles.length;
+  const skippedOversizedSourceFiles = sourceFiles.filter((sourceFile) => sourceFile.skipReason === "oversized").length;
+  const skippedOverBudgetSourceFiles = sourceFiles.filter((sourceFile) => sourceFile.skipReason === "source_budget").length;
+  const sourceFilesByPath = new Map(indexableSourceFiles.map((file) => [file.relativePath, file]));
   const cacheFile = await readLocalIndexCacheFile(rootDir);
 
   if (!cacheFile.exists) {
@@ -196,11 +258,14 @@ export async function getLocalIndexCacheInfo(options: { rootDir: string }): Prom
       cacheBytes: 0,
       sourceFiles: sourceFiles.length,
       sourceBytes: sumSourceBytes(sourceFiles),
+      skippedSourceFiles,
+      skippedOversizedSourceFiles,
+      skippedOverBudgetSourceFiles,
       entries: 0,
       currentEntries: 0,
       staleEntries: 0,
       missingEntries: 0,
-      uncachedSourceFiles: sourceFiles.length,
+      uncachedSourceFiles: indexableSourceFiles.length,
       chunks: 0
     };
   }
@@ -217,11 +282,14 @@ export async function getLocalIndexCacheInfo(options: { rootDir: string }): Prom
       cacheBytes: cacheFile.cacheBytes,
       sourceFiles: sourceFiles.length,
       sourceBytes: sumSourceBytes(sourceFiles),
+      skippedSourceFiles,
+      skippedOversizedSourceFiles,
+      skippedOverBudgetSourceFiles,
       entries: 0,
       currentEntries: 0,
       staleEntries: 0,
       missingEntries: 0,
-      uncachedSourceFiles: sourceFiles.length,
+      uncachedSourceFiles: indexableSourceFiles.length,
       chunks: 0
     };
   }
@@ -253,11 +321,14 @@ export async function getLocalIndexCacheInfo(options: { rootDir: string }): Prom
     cacheBytes: cacheFile.cacheBytes,
     sourceFiles: sourceFiles.length,
     sourceBytes: sumSourceBytes(sourceFiles),
+    skippedSourceFiles,
+    skippedOversizedSourceFiles,
+    skippedOverBudgetSourceFiles,
     entries: cacheFile.cache.entries.length,
     currentEntries,
     staleEntries,
     missingEntries,
-    uncachedSourceFiles: sourceFiles.filter((sourceFile) => !cachedSourcePaths.has(sourceFile.relativePath)).length,
+    uncachedSourceFiles: indexableSourceFiles.filter((sourceFile) => !cachedSourcePaths.has(sourceFile.relativePath)).length,
     chunks: cacheFile.cache.entries.reduce((total, entry) => total + entry.document.chunks.length, 0)
   };
 }
@@ -265,13 +336,30 @@ export async function getLocalIndexCacheInfo(options: { rootDir: string }): Prom
 export async function clearLocalIndexCache(options: { rootDir: string }): Promise<LocalIndexCacheClearResult> {
   const rootDir = normalizeRootDir(options.rootDir);
   const cachePath = getLocalIndexCachePath(rootDir);
-  const removed = await fileExists(cachePath);
+  const cacheStat = await stat(cachePath).catch((error: unknown) => {
+    if (getErrorCode(error) === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!cacheStat) {
+    return {
+      cachePath,
+      removed: false
+    };
+  }
+
+  if (!cacheStat.isFile()) {
+    throw new Error(`Local index cache must be a file: ${cachePath}`);
+  }
 
   await rm(cachePath, { force: true });
 
   return {
     cachePath,
-    removed
+    removed: true
   };
 }
 
@@ -279,6 +367,12 @@ function normalizeRootDir(rootDir: string): string {
   const trimmed = rootDir.trim();
   if (trimmed.length === 0) {
     throw new Error("Local sources rootDir must not be empty.");
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+    throw new Error("Local sources rootDir must not contain control characters.");
+  }
+  if (trimmed.length > MAX_LOCAL_ROOT_DIR_CHARS) {
+    throw new Error(`Local sources rootDir must be at most ${MAX_LOCAL_ROOT_DIR_CHARS} characters.`);
   }
 
   return resolve(trimmed);
@@ -293,12 +387,12 @@ async function buildIndex(rootDir: string): Promise<LocalSearchIndex> {
   const documents: IndexedDocument[] = [];
   const nextCacheEntries: CachedSourceEntry[] = [];
 
-  for (const sourceFile of sourceFiles) {
+  for (const sourceFile of sourceFiles.filter(isIndexableSourceFile)) {
     const cachedEntry = cachedEntries.get(sourceFile.relativePath);
     const document =
       cachedEntry && isCacheEntryCurrent(cachedEntry, sourceFile)
         ? hydrateCachedDocument(rootDir, cachedEntry)
-        : await readIndexedDocument(rootDir, sourceFile.path);
+        : readIndexedDocument(rootDir, sourceFile);
 
     documents.push(document);
     nextCacheEntries.push(serializeCacheEntry(sourceFile, document));
@@ -308,30 +402,70 @@ async function buildIndex(rootDir: string): Promise<LocalSearchIndex> {
   return buildSearchIndex(documents);
 }
 
+function isIndexableSourceFile(sourceFile: SourceFileMetadata): boolean {
+  return sourceFile.skipReason === undefined && sourceFile.size <= MAX_LOCAL_SOURCE_BYTES;
+}
+
 async function readSourceFileMetadata(rootDir: string, files: string[]): Promise<SourceFileMetadata[]> {
   const metadata: SourceFileMetadata[] = [];
+  let indexableSourceBytes = 0;
 
   for (const file of files) {
-    const fileStat = await stat(file);
-    metadata.push({
+    const fileStat = await stat(file).catch(() => undefined);
+    if (!fileStat?.isFile()) {
+      continue;
+    }
+    const sourceFile: SourceFileMetadata = {
       path: file,
       relativePath: normalizeRelativePath(rootDir, file),
       mtimeMs: fileStat.mtimeMs,
       size: fileStat.size
-    });
+    };
+    if (sourceFile.size > MAX_LOCAL_SOURCE_BYTES) {
+      metadata.push({
+        ...sourceFile,
+        skipReason: "oversized"
+      });
+      continue;
+    }
+    if (indexableSourceBytes + sourceFile.size > MAX_LOCAL_SOURCE_TOTAL_BYTES) {
+      metadata.push({
+        ...sourceFile,
+        skipReason: "source_budget"
+      });
+      continue;
+    }
+    if (isIndexableSourceFile(sourceFile)) {
+      const rawBytes = await readLocalSourceBytes(file).catch(() => undefined);
+      if (!rawBytes) {
+        metadata.push({
+          ...sourceFile,
+          size: MAX_LOCAL_SOURCE_BYTES + 1,
+          skipReason: "oversized"
+        });
+        continue;
+      }
+      const rawText = rawBytes.toString("utf8");
+      const source = parseSourceText(file, rawText);
+      sourceFile.size = rawBytes.byteLength;
+      sourceFile.contentHash = hashBytes(rawBytes);
+      sourceFile.documentHash = hashDocument(source.title ?? basename(file), source.text);
+      sourceFile.source = source;
+      indexableSourceBytes += rawBytes.byteLength;
+    }
+    metadata.push(sourceFile);
   }
 
   return metadata;
 }
 
-async function readIndexedDocument(rootDir: string, file: string): Promise<IndexedDocument> {
-  const rawText = await readFile(file, "utf8");
-  const source = parseSourceText(file, rawText);
-  const title = source.title ?? basename(file);
+function readIndexedDocument(rootDir: string, sourceFile: SourceFileMetadata): IndexedDocument {
+  const source = requireParsedSource(sourceFile);
+  const title = source.title ?? basename(sourceFile.path);
 
   return {
-    id: stableId(normalizeRelativePath(rootDir, file)),
-    path: file,
+    id: stableId(normalizeRelativePath(rootDir, sourceFile.path)),
+    path: sourceFile.path,
     title,
     text: source.text,
     titleTokens: new Set(tokenize(title)),
@@ -340,7 +474,41 @@ async function readIndexedDocument(rootDir: string, file: string): Promise<Index
   };
 }
 
-function parseSourceText(file: string, rawText: string): { text: string; title?: string } {
+function requireParsedSource(sourceFile: SourceFileMetadata): ParsedSourceText {
+  if (!sourceFile.source) {
+    throw new Error(`Local source file is missing parsed source text: ${sourceFile.relativePath}`);
+  }
+
+  return sourceFile.source;
+}
+
+async function readLocalSourceBytes(path: string): Promise<Buffer | undefined> {
+  const handle = await open(path, "r");
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const remaining = MAX_LOCAL_SOURCE_BYTES + 1 - totalBytes;
+      const buffer = Buffer.alloc(Math.min(LOCAL_SOURCE_READ_CHUNK_BYTES, remaining));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+
+      if (bytesRead === 0) {
+        return Buffer.concat(chunks, totalBytes);
+      }
+
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_LOCAL_SOURCE_BYTES) {
+        return undefined;
+      }
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseSourceText(file: string, rawText: string): ParsedSourceText {
   const extension = extname(file).toLowerCase();
   if (extension === ".html" || extension === ".htm") {
     const text = htmlToText(rawText);
@@ -357,7 +525,14 @@ function parseSourceText(file: string, rawText: string): { text: string; title?:
 }
 
 function isCacheEntryCurrent(entry: CachedSourceEntry, sourceFile: SourceFileMetadata): boolean {
-  return entry.relativePath === sourceFile.relativePath && entry.mtimeMs === sourceFile.mtimeMs && entry.size === sourceFile.size;
+  return (
+    entry.relativePath === sourceFile.relativePath &&
+    entry.mtimeMs === sourceFile.mtimeMs &&
+    entry.size === sourceFile.size &&
+    entry.contentHash === sourceFile.contentHash &&
+    entry.documentHash === sourceFile.documentHash &&
+    hashDocument(entry.document.title, entry.document.text) === sourceFile.documentHash
+  );
 }
 
 function hydrateCachedDocument(rootDir: string, entry: CachedSourceEntry): IndexedDocument {
@@ -386,6 +561,8 @@ function serializeCacheEntry(sourceFile: SourceFileMetadata, document: IndexedDo
     relativePath: sourceFile.relativePath,
     mtimeMs: sourceFile.mtimeMs,
     size: sourceFile.size,
+    contentHash: requireContentHash(sourceFile),
+    documentHash: requireDocumentHash(sourceFile),
     document: {
       id: document.id,
       title: document.title,
@@ -404,6 +581,30 @@ function serializeCacheEntry(sourceFile: SourceFileMetadata, document: IndexedDo
   };
 }
 
+function hashBytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function hashDocument(title: string, text: string): string {
+  return createHash("sha256").update(title).update("\0").update(text).digest("hex");
+}
+
+function requireContentHash(sourceFile: SourceFileMetadata): string {
+  if (!sourceFile.contentHash) {
+    throw new Error(`Local source file is missing a content hash: ${sourceFile.relativePath}`);
+  }
+
+  return sourceFile.contentHash;
+}
+
+function requireDocumentHash(sourceFile: SourceFileMetadata): string {
+  if (!sourceFile.documentHash) {
+    throw new Error(`Local source file is missing a document hash: ${sourceFile.relativePath}`);
+  }
+
+  return sourceFile.documentHash;
+}
+
 async function readLocalIndexCache(rootDir: string): Promise<CachedLocalIndex | undefined> {
   const cacheFile = await readLocalIndexCacheFile(rootDir);
   return cacheFile.exists ? cacheFile.cache : undefined;
@@ -417,6 +618,23 @@ async function readLocalIndexCacheFile(rootDir: string): Promise<
 
   try {
     const cacheStat = await stat(cachePath);
+    if (!cacheStat.isFile()) {
+      return {
+        cachePath,
+        exists: true,
+        cacheBytes: cacheStat.size,
+        invalidReason: `Local index cache must be a file: ${cachePath}`
+      };
+    }
+
+    if (cacheStat.size > MAX_LOCAL_CACHE_BYTES) {
+      return {
+        cachePath,
+        exists: true,
+        cacheBytes: cacheStat.size,
+        invalidReason: `Local index cache is larger than ${MAX_LOCAL_CACHE_BYTES} bytes.`
+      };
+    }
     const raw = await readFile(cachePath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     const cacheSchemaVersion = readCacheSchemaVersion(parsed);
@@ -454,24 +672,53 @@ async function readCacheFileSize(cachePath: string): Promise<number> {
 }
 
 async function writeLocalIndexCache(rootDir: string, entries: CachedSourceEntry[]): Promise<void> {
-  let tempPath: string | undefined;
+  const cachePath = getLocalIndexCachePath(rootDir);
+
+  await withCachePathLock(cachePath, async () => {
+    let tempPath: string | undefined;
+
+    try {
+      tempPath = `${cachePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+      const cache: CachedLocalIndex = {
+        schemaVersion: LOCAL_INDEX_CACHE_VERSION,
+        entries
+      };
+      const content = `${JSON.stringify(cache, null, 2)}\n`;
+
+      if (new TextEncoder().encode(content).byteLength > MAX_LOCAL_CACHE_BYTES) {
+        return;
+      }
+
+      await mkdir(dirname(cachePath), { recursive: true });
+      await writeFile(tempPath, content, "utf8");
+      await rename(tempPath, cachePath);
+    } catch {
+      if (tempPath) {
+        await rm(tempPath, { force: true }).catch(() => undefined);
+      }
+      // Local search should keep working even when the source folder is read-only.
+    }
+  });
+}
+
+async function withCachePathLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = cacheWriteLocks.get(path) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const token = previous.catch(() => undefined).then(() => current);
+
+  cacheWriteLocks.set(path, token);
+  await previous.catch(() => undefined);
 
   try {
-    const cachePath = getLocalIndexCachePath(rootDir);
-    tempPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
-    const cache: CachedLocalIndex = {
-      schemaVersion: LOCAL_INDEX_CACHE_VERSION,
-      entries
-    };
-
-    await mkdir(dirname(cachePath), { recursive: true });
-    await writeFile(tempPath, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-    await rename(tempPath, cachePath);
-  } catch {
-    if (tempPath) {
-      await rm(tempPath, { force: true }).catch(() => undefined);
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (cacheWriteLocks.get(path) === token) {
+      cacheWriteLocks.delete(path);
     }
-    // Local search should keep working even when the source folder is read-only.
   }
 }
 
@@ -510,7 +757,16 @@ function parseLocalIndexCache(value: unknown): { cache?: CachedLocalIndex; inval
 }
 
 function parseCachedSourceEntry(value: unknown): CachedSourceEntry | undefined {
-  if (!isRecord(value) || !isFiniteNumber(value.mtimeMs) || !isFiniteNumber(value.size) || typeof value.relativePath !== "string") {
+  if (
+    !isRecord(value) ||
+    !isFiniteNumber(value.mtimeMs) ||
+    !isFiniteNumber(value.size) ||
+    typeof value.relativePath !== "string" ||
+    typeof value.contentHash !== "string" ||
+    !isSafeContentHash(value.contentHash) ||
+    typeof value.documentHash !== "string" ||
+    !isSafeContentHash(value.documentHash)
+  ) {
     return undefined;
   }
 
@@ -528,8 +784,14 @@ function parseCachedSourceEntry(value: unknown): CachedSourceEntry | undefined {
     relativePath,
     mtimeMs: value.mtimeMs,
     size: value.size,
+    contentHash: value.contentHash,
+    documentHash: value.documentHash,
     document
   };
+}
+
+function isSafeContentHash(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
 }
 
 function parseCachedIndexedDocument(value: unknown): CachedIndexedDocument | undefined {
@@ -548,6 +810,9 @@ function parseCachedIndexedDocument(value: unknown): CachedIndexedDocument | und
     }
     chunks.push(parsed);
   }
+  if (!hasConsistentCachedChunks(value.text, chunks)) {
+    return undefined;
+  }
 
   return {
     id: value.id,
@@ -555,6 +820,40 @@ function parseCachedIndexedDocument(value: unknown): CachedIndexedDocument | und
     text: value.text,
     chunks
   };
+}
+
+function hasConsistentCachedChunks(text: string, chunks: CachedLocalChunk[]): boolean {
+  const expectedChunks = chunkText(text);
+  if (expectedChunks.length !== chunks.length) {
+    return false;
+  }
+
+  return chunks.every((chunk, index) => {
+    const expected = expectedChunks[index];
+    return (
+      expected !== undefined &&
+      chunk.id === expected.id &&
+      chunk.text === expected.text &&
+      chunk.startLine === expected.startLine &&
+      chunk.endLine === expected.endLine &&
+      chunk.tokenCount === expected.tokenCount &&
+      chunk.normalizedText === expected.normalizedText &&
+      arraysEqual(chunk.tokens, Array.from(expected.tokens)) &&
+      termFrequenciesEqual(chunk.termFrequencies, expected.termFrequencies)
+    );
+  });
+}
+
+function termFrequenciesEqual(actual: Array<[string, number]>, expected: Map<string, number>): boolean {
+  if (actual.length !== expected.size) {
+    return false;
+  }
+
+  return actual.every(([token, frequency]) => expected.get(token) === frequency);
+}
+
+function arraysEqual<T>(actual: T[], expected: T[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
 function parseCachedLocalChunk(value: unknown): CachedLocalChunk | undefined {
@@ -749,11 +1048,15 @@ async function listSourceFiles(rootDir: string, ignoreRules: IgnoreRule[]): Prom
   }
 
   const files: string[] = [];
-  await walk(rootDir, rootDir, files, ignoreRules);
+  await walk(rootDir, rootDir, files, ignoreRules, 0);
   return files.sort((a, b) => normalizeRelativePath(rootDir, a).localeCompare(normalizeRelativePath(rootDir, b)));
 }
 
-async function walk(rootDir: string, dir: string, files: string[], ignoreRules: IgnoreRule[]): Promise<void> {
+async function walk(rootDir: string, dir: string, files: string[], ignoreRules: IgnoreRule[], depth: number): Promise<void> {
+  if (depth > MAX_LOCAL_DIRECTORY_DEPTH) {
+    throw new Error(`Local source directory nesting must be at most ${MAX_LOCAL_DIRECTORY_DEPTH} levels: ${dir}`);
+  }
+
   const entries = await readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -768,11 +1071,14 @@ async function walk(rootDir: string, dir: string, files: string[], ignoreRules: 
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist" || entry.name === ".sourceline") {
         continue;
       }
-      await walk(rootDir, path, files, ignoreRules);
+      await walk(rootDir, path, files, ignoreRules, depth + 1);
       continue;
     }
 
     if (!ignored && entry.isFile() && SUPPORTED_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      if (files.length >= MAX_LOCAL_SOURCE_FILES) {
+        throw new Error(`Local sources must contain at most ${MAX_LOCAL_SOURCE_FILES} supported files: ${rootDir}`);
+      }
       files.push(path);
     }
   }
@@ -788,16 +1094,32 @@ async function loadIgnoreRules(rootDir: string): Promise<IgnoreRule[]> {
       continue;
     }
     seen.add(candidate);
+    const ignoreStat = await stat(candidate);
+    if (!ignoreStat.isFile()) {
+      throw new Error(`Local ignore file must be a file: ${candidate}`);
+    }
+    if (ignoreStat.size > MAX_IGNORE_FILE_BYTES) {
+      throw new Error(`Local ignore file is larger than ${MAX_IGNORE_FILE_BYTES} bytes: ${candidate}`);
+    }
     const raw = await readFile(candidate, "utf8");
-    for (const line of raw.split(/\r?\n/)) {
+    for (const [lineIndex, line] of raw.split(/\r?\n/).entries()) {
       const trimmed = line.trim();
       if (trimmed.length === 0 || trimmed.startsWith("#")) {
         continue;
+      }
+      if (hasControlCharacters(trimmed)) {
+        throw new Error(`Local ignore rule must not contain control characters: ${candidate}:${lineIndex + 1}`);
       }
       const negated = trimmed.startsWith("!");
       const pattern = negated ? trimmed.slice(1).trim() : trimmed;
       if (pattern.length === 0) {
         continue;
+      }
+      if (pattern.length > MAX_IGNORE_PATTERN_CHARS) {
+        throw new Error(`Local ignore rule must be at most ${MAX_IGNORE_PATTERN_CHARS} characters: ${candidate}:${lineIndex + 1}`);
+      }
+      if (rules.length >= MAX_IGNORE_RULES) {
+        throw new Error(`Local ignore files must define at most ${MAX_IGNORE_RULES} rules.`);
       }
       rules.push({
         raw: trimmed,
@@ -861,6 +1183,10 @@ function ignorePatternToRegex(pattern: string): RegExp {
 
 function normalizeIgnorePattern(pattern: string): string {
   return pattern.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
 function chunkText(text: string): LocalChunk[] {
@@ -1060,6 +1386,17 @@ function tokenize(text: string): string[] {
   }
 
   return tokens;
+}
+
+function normalizeLocalOutputText(value: string, maxLength: number, collapseWhitespace = false): string | undefined {
+  return normalizeOptionalText(value, { collapseWhitespace, maxLength });
+}
+
+function normalizeLocalMatchedTerms(terms: string[]): string[] {
+  return terms
+    .map((term) => normalizeLocalOutputText(term, MAX_LOCAL_SEARCH_QUERY_CHARS, true))
+    .filter((term): term is string => term !== undefined)
+    .slice(0, MAX_LOCAL_MATCHED_TERMS);
 }
 
 function tokenizeMixedToken(value: string): string[] {

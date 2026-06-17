@@ -1,5 +1,6 @@
 import type { ClaimCheck, EvidenceItem, SourceLineReport } from "@sourceline/core";
 import { sanitizeReport } from "./sanitize.js";
+import { isCredentiallessHttpUrl } from "./url-safety.js";
 
 export function renderMarkdownReport(report: SourceLineReport): string {
   report = sanitizeReport(report);
@@ -79,7 +80,11 @@ function renderEvidence(evidence: EvidenceItem): string {
 }
 
 function escapeMarkdown(value: string): string {
-  return value.replace(/([\\[\]])/g, "\\$1");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([\\[\]])/g, "\\$1");
 }
 
 function escapeMarkdownInline(value: string): string {
@@ -130,7 +135,7 @@ function formatSafeHref(value: string): string | undefined {
     return undefined;
   }
   if (/^https?:\/\//i.test(trimmed)) {
-    return /[\s<>]/.test(trimmed) ? undefined : trimmed;
+    return /[\s<>]/.test(trimmed) || !isCredentiallessHttpUrl(trimmed) ? undefined : trimmed;
   }
   if (!trimmed.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
     return trimmed;

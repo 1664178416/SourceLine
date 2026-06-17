@@ -16,11 +16,27 @@ import {
   normalizeRequestTimeoutMs,
   normalizeRequiredStringConfig,
   parseJsonResponse,
-  readErrorResponseBody
+  readErrorResponseBody,
+  redactBearerTokens
 } from "./request-utils.js";
+import { normalizeHttpUrl, normalizeIdentifierPart } from "./search-utils.js";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5-openai-compact";
+const MAX_EXTRACTED_CLAIMS = 100;
+const MAX_EVIDENCE_DECISIONS = 20;
+const MAX_RISK_FLAGS = 20;
+const MAX_JSON_OBJECT_CANDIDATES = 20;
+const MAX_SEARCH_QUERIES_PER_CLAIM = 5;
+const MAX_SEARCH_QUERY_CHARS = 500;
+const MAX_PROMPT_SOURCE_ID_CHARS = 200;
+const MAX_INLINE_TEXT_CHARS = 2_000;
+const MAX_EXPLANATION_CHARS = 4_000;
+const MAX_VALIDATION_ERROR_CHARS = 2_000;
+const MAX_VALIDATION_ERROR_ISSUES = 20;
+const MAX_VALIDATION_ISSUE_CHARS = 300;
+const MAX_VALIDATION_ISSUE_PATH_CHARS = 200;
+const TRUNCATION_MARKER = "... [truncated]";
 
 export type OpenAiProviderOptions = {
   apiKey?: string;
@@ -50,23 +66,33 @@ const normalizedNonEmptyStringSchema = z
   .string()
   .transform((value) => normalizeText(value))
   .pipe(z.string().min(1));
+const normalizedClaimTextSchema = z
+  .string()
+  .transform((value) => normalizeText(value, MAX_INLINE_TEXT_CHARS))
+  .pipe(z.string().min(1));
+const normalizedExplanationSchema = z
+  .string()
+  .transform((value) => normalizeText(value, MAX_EXPLANATION_CHARS))
+  .pipe(z.string().min(1));
 const normalizedSearchQueriesSchema = z
   .array(z.string())
   .optional()
-  .transform((queries) => (queries ?? []).map((query) => normalizeText(query)).filter((query) => query.length > 0));
+  .transform((queries) =>
+    (queries ?? []).map(normalizeSearchQueryText).filter((query) => query.length > 0).slice(0, MAX_SEARCH_QUERIES_PER_CLAIM)
+  );
 
 const extractedClaimSchema = z.object({
-  text: normalizedNonEmptyStringSchema,
+  text: normalizedClaimTextSchema,
   sourceStartLine: z.number().int().positive().optional(),
   sourceEndLine: z.number().int().positive().optional(),
-  quote: z.string().optional(),
+  quote: z.string().optional().transform((value) => (value === undefined ? undefined : normalizeText(value, MAX_EXPLANATION_CHARS))),
   claimType: claimTypeSchema.default("general_factual"),
   importance: importanceSchema.default("medium"),
   searchQueries: normalizedSearchQueriesSchema
 });
 
 const extractClaimsSchema = z.object({
-  claims: z.array(extractedClaimSchema)
+  claims: z.array(extractedClaimSchema).transform((claims) => claims.slice(0, MAX_EXTRACTED_CLAIMS))
 });
 
 const verificationStatusSchema = z.enum([
@@ -99,16 +125,16 @@ const evidenceDecisionSchema = z.object({
   sourceId: normalizedNonEmptyStringSchema,
   relation: evidenceRelationSchema,
   confidence: z.number().min(0).max(1),
-  quotedSupport: z.string().optional().transform((value) => (value === undefined ? undefined : normalizeText(value))),
-  explanation: normalizedNonEmptyStringSchema
+  quotedSupport: z.string().optional().transform((value) => (value === undefined ? undefined : normalizeText(value, MAX_EXPLANATION_CHARS))),
+  explanation: normalizedExplanationSchema
 });
 
 const verifyClaimSchema = z.object({
   status: verificationStatusSchema,
   confidence: z.number().min(0).max(1),
-  evidence: z.array(evidenceDecisionSchema).default([]),
-  explanation: normalizedNonEmptyStringSchema,
-  riskFlags: z.array(riskFlagSchema).default([])
+  evidence: z.array(evidenceDecisionSchema).default([]).transform((evidence) => evidence.slice(0, MAX_EVIDENCE_DECISIONS)),
+  explanation: normalizedExplanationSchema,
+  riskFlags: z.array(riskFlagSchema).default([]).transform((riskFlags) => riskFlags.slice(0, MAX_RISK_FLAGS))
 });
 
 const chatCompletionSchema = z.object({
@@ -160,7 +186,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
             },
             claimType: claim.claimType,
             importance: claim.importance,
-            searchQueries: claim.searchQueries.length > 0 ? claim.searchQueries : [text]
+            searchQueries: claim.searchQueries.length > 0 ? claim.searchQueries : [normalizeSearchQueryText(text)]
           };
         })
       };
@@ -169,6 +195,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
       if (input.evidence.length === 0) {
         return noEvidenceCheck(input.claim);
       }
+      const evidenceSources = normalizePromptEvidenceSources(input.evidence.slice(0, MAX_EVIDENCE_DECISIONS));
 
       const parsed = await chatJsonWithSchema({
         apiKey,
@@ -176,14 +203,14 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
         fetchImpl,
         model,
         timeoutMs,
-        messages: buildVerifyMessages(input.claim, input.evidence, input.minConfidence),
+        messages: buildVerifyMessages(input.claim, evidenceSources, input.minConfidence),
         schema: verifyClaimSchema,
         label: "verify claim"
       });
       const usedSourceIds = new Set<string>();
       const evidence = parsed.evidence
         .map((item): EvidenceItem | undefined => {
-          const source = input.evidence.find((candidate) => candidate.id === item.sourceId);
+          const source = evidenceSources.find((candidate) => candidate.id === item.sourceId);
           if (!source || usedSourceIds.has(source.id)) {
             return undefined;
           }
@@ -288,11 +315,11 @@ async function chatJson(options: {
   });
 
   if (!response.ok) {
-    const body = await readErrorResponseBody(response, redactSecrets);
+    const body = await readErrorResponseBody(response, redactSecrets, { timeoutMs: options.timeoutMs });
     throw new Error(`OpenAI-compatible provider returned ${response.status}: ${body}`);
   }
 
-  const json = await parseJsonResponse(response, chatCompletionSchema, "OpenAI-compatible provider");
+  const json = await parseJsonResponse(response, chatCompletionSchema, "OpenAI-compatible provider", { timeoutMs: options.timeoutMs });
   const content = json.choices?.[0]?.message?.content;
 
   if (!content) {
@@ -336,7 +363,7 @@ Rules:
 - A claim must be checkable against sources.
 - Preserve the original meaning.
 - Prefer precise, source-searchable wording.
-- Keep searchQueries short and specific.
+- Return no more than ${MAX_SEARCH_QUERIES_PER_CLAIM} searchQueries per claim; keep each query short and specific.
 - If no factual claims exist, return {"claims":[]}.
 
 Segments:
@@ -349,7 +376,7 @@ function buildVerifyMessages(claim: Claim, evidence: SearchResult[], minConfiden
   const evidenceText = evidence
     .map((source) => {
       const title = normalizeText(source.title ?? "Untitled") || "Untitled";
-      const location = normalizeText(source.url ?? source.path ?? "N/A") || "N/A";
+      const location = formatEvidenceLocation(source);
       const snippet = normalizeText(source.snippet ?? source.text ?? "");
 
       return `Source ID: ${source.id}
@@ -400,6 +427,49 @@ Rules:
 - Keep confidence between 0 and 1.`
     }
   ];
+}
+
+function normalizePromptEvidenceSources(evidence: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>();
+
+  return evidence.map((source, index) => {
+    const baseId = normalizeIdentifierPart(source.id, `source-${index + 1}`);
+    const id = uniquePromptSourceId(baseId, index + 1, seen);
+    return id === source.id ? source : { ...source, id };
+  });
+}
+
+function uniquePromptSourceId(baseId: string, rank: number, seen: Set<string>): string {
+  if (!seen.has(baseId)) {
+    seen.add(baseId);
+    return baseId;
+  }
+
+  const suffix = `-${rank}`;
+  const truncatedBase = baseId.slice(0, Math.max(1, MAX_PROMPT_SOURCE_ID_CHARS - suffix.length)).replace(/-+$/g, "");
+  const candidate = `${truncatedBase || "source"}${suffix}`;
+
+  if (!seen.has(candidate)) {
+    seen.add(candidate);
+    return candidate;
+  }
+
+  let counter = 2;
+  while (true) {
+    const nextSuffix = `${suffix}-${counter}`;
+    const nextBase = baseId.slice(0, Math.max(1, MAX_PROMPT_SOURCE_ID_CHARS - nextSuffix.length)).replace(/-+$/g, "");
+    const nextCandidate = `${nextBase || "source"}${nextSuffix}`;
+    if (!seen.has(nextCandidate)) {
+      seen.add(nextCandidate);
+      return nextCandidate;
+    }
+    counter += 1;
+  }
+}
+
+function formatEvidenceLocation(source: SearchResult): string {
+  const safeUrl = source.url ? normalizeHttpUrl(source.url) : undefined;
+  return normalizeText(safeUrl ?? source.path ?? "N/A") || "N/A";
 }
 
 function parseJsonWithSchema<T>(content: string, schema: z.ZodType<T>): T {
@@ -472,6 +542,9 @@ function extractJsonObjectCandidates(content: string): string[] {
       depth -= 1;
       if (depth === 0 && start >= 0) {
         candidates.push(content.slice(start, index + 1));
+        if (candidates.length >= MAX_JSON_OBJECT_CANDIDATES) {
+          return candidates;
+        }
         start = -1;
       }
     }
@@ -482,12 +555,32 @@ function extractJsonObjectCandidates(content: string): string[] {
 
 function formatValidationError(error: unknown): string {
   if (error instanceof z.ZodError) {
-    return error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ");
+    return normalizeText(formatZodIssues(error), MAX_VALIDATION_ERROR_CHARS);
   }
-  if (error instanceof Error) {
-    return error.message;
+  if (error instanceof Error && error.message.length > 0) {
+    return normalizeText(error.message, MAX_VALIDATION_ERROR_CHARS);
   }
-  return String(error);
+  return normalizeText(String(error), MAX_VALIDATION_ERROR_CHARS);
+}
+
+function formatZodIssues(error: z.ZodError): string {
+  const issues = error.issues.slice(0, MAX_VALIDATION_ERROR_ISSUES).map(formatZodIssue);
+  const omitted = error.issues.length - issues.length;
+  if (omitted > 0) {
+    issues.push(`${TRUNCATION_MARKER} (${omitted} more validation issues omitted)`);
+  }
+
+  return issues.join("; ");
+}
+
+function formatZodIssue(issue: z.ZodError["issues"][number]): string {
+  const path = normalizeText(formatIssuePath(issue.path), MAX_VALIDATION_ISSUE_PATH_CHARS) || "<root>";
+  const message = normalizeText(issue.message, MAX_VALIDATION_ISSUE_CHARS) || "Invalid value";
+  return `${path}: ${message}`;
+}
+
+function formatIssuePath(path: PropertyKey[]): string {
+  return path.length === 0 ? "<root>" : path.map((part) => String(part)).join(".");
 }
 
 function noEvidenceCheck(claim: Claim): ClaimCheck {
@@ -501,11 +594,18 @@ function noEvidenceCheck(claim: Claim): ClaimCheck {
   };
 }
 
-function normalizeText(text: string): string {
-  return stripAnsi(text)
+function normalizeText(text: string, maxLength = MAX_INLINE_TEXT_CHARS): string {
+  const normalized = stripAnsi(text)
     .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+
+  return truncateText(normalized, maxLength);
+}
+
+function normalizeSearchQueryText(text: string): string {
+  const normalized = normalizeText(text, MAX_SEARCH_QUERY_CHARS + TRUNCATION_MARKER.length);
+  return normalized.length > MAX_SEARCH_QUERY_CHARS ? normalized.slice(0, MAX_SEARCH_QUERY_CHARS).trim() : normalized;
 }
 
 function stripAnsi(value: string): string {
@@ -518,8 +618,19 @@ function roundConfidence(confidence: number): number {
   return Math.round(confidence * 100) / 100;
 }
 
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= TRUNCATION_MARKER.length) {
+    return value.slice(0, maxLength);
+  }
+
+  return `${value.slice(0, maxLength - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+}
+
 function redactSecrets(value: string): string {
-  return value.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***");
+  return redactBearerTokens(value).replace(/sk-[A-Za-z0-9_-]+/g, "sk-***");
 }
 
 function normalizeApiKey(value: string | undefined, message: string): string {

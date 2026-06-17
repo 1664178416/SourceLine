@@ -1,8 +1,9 @@
-import { access, writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 const CONFIG_FILE = "sourceline.config.json";
+const MAX_CONFIG_PATH_CHARS = 2_000;
 
 export function registerInitCommand(program: Command): void {
   program
@@ -14,14 +15,18 @@ export function registerInitCommand(program: Command): void {
 }
 
 export async function runInitCommand(options: { configPath?: string; writeOutput?: (value: string) => void } = {}): Promise<void> {
-  const configPath = options.configPath ?? CONFIG_FILE;
+  const configPath = normalizeConfigPath(options.configPath ?? CONFIG_FILE);
   const writeOutput = options.writeOutput ?? ((value: string) => process.stdout.write(value));
 
   try {
     await writeFile(configPath, starterConfig(), { encoding: "utf8", flag: "wx" });
     writeOutput(`${pc.green("Created:")} ${configPath}\n`);
   } catch (error) {
-    if (getErrorCode(error) === "EEXIST" || (await fileExists(configPath))) {
+    const existingStat = await stat(configPath).catch(() => undefined);
+    if (existingStat && !existingStat.isFile()) {
+      throw new Error(`SourceLine config must be a file: ${configPath}`);
+    }
+    if (getErrorCode(error) === "EEXIST" || existingStat) {
       writeOutput(`${pc.yellow("Skipped:")} ${configPath} already exists.\n`);
       return;
     }
@@ -29,13 +34,26 @@ export async function runInitCommand(options: { configPath?: string; writeOutput
   }
 }
 
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
+function normalizeConfigPath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) {
+    throw new Error("SourceLine config path must not be empty.");
   }
+  if (hasControlCharacters(trimmed)) {
+    throw new Error("SourceLine config path must not contain control characters.");
+  }
+  if (trimmed.length > MAX_CONFIG_PATH_CHARS) {
+    throw new Error(`SourceLine config path must be at most ${MAX_CONFIG_PATH_CHARS} characters.`);
+  }
+  if (/[\\/]$/.test(trimmed)) {
+    throw new Error("SourceLine config path must be a file path, not a directory.");
+  }
+
+  return trimmed;
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
 export function starterConfig(): string {

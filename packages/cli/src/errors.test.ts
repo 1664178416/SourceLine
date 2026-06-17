@@ -31,4 +31,14 @@ describe("formatCliError", () => {
     const output = formatCliError(new Error("\n\t"));
 
     expect(output).toContain("SourceLine error: Unknown error.");
-  });});
+  });
+
+  it("truncates oversized non-debug error messages", () => {
+    const output = formatCliError(new Error(`${"x".repeat(2_500)} secret-tail`));
+    const firstLine = output.split("\n")[0] ?? "";
+
+    expect(firstLine).toHaveLength("SourceLine error: ".length + 2_000);
+    expect(firstLine).toMatch(/\.\.\. \[truncated\]$/);
+    expect(firstLine).not.toContain("secret-tail");
+  });
+});

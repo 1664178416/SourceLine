@@ -1,12 +1,24 @@
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
   loadConfig,
+  MAX_CLAIMS,
+  MAX_PROVIDER_TIMEOUT_MS,
+  MAX_RESULTS_PER_CLAIM,
   resolveCheckSettings,
   type ResolvedCheckSettings
 } from "@sourceline/config";
-import { runCheck, type ClaimCheck, type InputDescriptor, type LlmProvider, type SearchProvider, type SourceLineReport } from "@sourceline/core";
+import {
+  MAX_INPUT_BYTES,
+  runCheck,
+  type ClaimCheck,
+  type InputDescriptor,
+  type LlmProvider,
+  type SearchProvider,
+  type SourceLineReport
+} from "@sourceline/core";
 import {
   createBraveSearchProvider,
   createLocalSearchProvider,
@@ -37,6 +49,9 @@ type CheckCommandOptions = {
   yes?: boolean;
 };
 
+const MAX_CLI_PATH_OR_URL_CHARS = 2_000;
+const outputWriteLocks = new Map<string, Promise<void>>();
+
 export function registerCheckCommand(program: Command): void {
   program
     .command("check")
@@ -51,10 +66,10 @@ export function registerCheckCommand(program: Command): void {
     .option("--model <model>", "OpenAI-compatible model. Defaults to OPENAI_MODEL or gpt-5.5-openai-compact")
     .option("--search <name>", "Search provider: mock, local, tavily, or brave")
     .option("--sources <dir>", "Use a local Markdown/txt/HTML source folder")
-    .option("--max-claims <number>", "Maximum claims to extract")
-    .option("--max-results <number>", "Maximum evidence results per claim")
+    .option("--max-claims <number>", `Maximum claims to extract (max ${MAX_CLAIMS})`)
+    .option("--max-results <number>", `Maximum evidence results per claim (max ${MAX_RESULTS_PER_CLAIM})`)
     .option("--min-confidence <number>", "Minimum confidence threshold between 0 and 1")
-    .option("--provider-timeout-ms <number>", "Remote provider request timeout in milliseconds")
+    .option("--provider-timeout-ms <number>", `Remote provider request timeout in milliseconds (max ${MAX_PROVIDER_TIMEOUT_MS})`)
     .option("--fail-on <level>", "Exit with code 2 on: never, review, unsupported, or contradicted")
     .option("--yes", "Confirm cloud provider use in non-interactive runs")
     .action(async (input: string | undefined, options: CheckCommandOptions) => {
@@ -172,6 +187,12 @@ export async function resolveInput(input: string | undefined, options: ResolveIn
   const trimmedInput = input?.trim();
 
   if (trimmedInput && trimmedInput !== "-") {
+    if (hasControlCharacters(trimmedInput)) {
+      throw new Error("Input path or URL must not contain control characters.");
+    }
+    if (trimmedInput.length > MAX_CLI_PATH_OR_URL_CHARS) {
+      throw new Error(`Input path or URL must be at most ${MAX_CLI_PATH_OR_URL_CHARS} characters.`);
+    }
     if (isHttpUrl(trimmedInput)) {
       return {
         kind: "url",
@@ -190,6 +211,9 @@ export async function resolveInput(input: string | undefined, options: ResolveIn
   }
 
   const stdin = await (options.readStdin ?? readStdin)();
+  if (new TextEncoder().encode(stdin).byteLength > MAX_INPUT_BYTES) {
+    throw new Error(`Stdin input is larger than ${MAX_INPUT_BYTES} bytes.`);
+  }
   if (stdin.trim().length === 0) {
     throw new Error("No input provided. Pass a file path, URL, or pipe text into `sourceline check -`.");
   }
@@ -247,18 +271,42 @@ export function claimFailsGate(check: Pick<ClaimCheck, "status">, failOn: Resolv
 
 export async function writeOutputFile(path: string, content: string): Promise<string> {
   const outputPath = normalizeOutputPath(path);
-  await ensureOutputDirectory(outputPath);
-  const tempPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+  return withOutputPathLock(outputPath, async () => {
+    await ensureOutputDirectory(outputPath);
+    await assertOutputFilePath(outputPath);
+    const tempPath = `${outputPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+
+    try {
+      await writeFile(tempPath, content, "utf8");
+      await rename(tempPath, outputPath);
+    } catch (error) {
+      await rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+
+    return outputPath;
+  });
+}
+
+async function withOutputPathLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = outputWriteLocks.get(path) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const token = previous.catch(() => undefined).then(() => current);
+
+  outputWriteLocks.set(path, token);
+  await previous.catch(() => undefined);
 
   try {
-    await writeFile(tempPath, content, "utf8");
-    await rename(tempPath, outputPath);
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined);
-    throw error;
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (outputWriteLocks.get(path) === token) {
+      outputWriteLocks.delete(path);
+    }
   }
-
-  return outputPath;
 }
 
 function normalizeOutputPath(path: string): string {
@@ -266,8 +314,21 @@ function normalizeOutputPath(path: string): string {
   if (trimmed.length === 0) {
     throw new Error("--out must not be empty.");
   }
+  if (hasControlCharacters(trimmed)) {
+    throw new Error("--out must not contain control characters.");
+  }
+  if (trimmed.length > MAX_CLI_PATH_OR_URL_CHARS) {
+    throw new Error(`--out must be at most ${MAX_CLI_PATH_OR_URL_CHARS} characters.`);
+  }
+  if (/[\\/]$/.test(trimmed)) {
+    throw new Error("--out must be a file path, not a directory.");
+  }
 
   return trimmed;
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
 async function ensureOutputDirectory(path: string): Promise<void> {
@@ -279,10 +340,34 @@ async function ensureOutputDirectory(path: string): Promise<void> {
   await mkdir(outputDir, { recursive: true });
 }
 
+async function assertOutputFilePath(path: string): Promise<void> {
+  try {
+    const outputStat = await stat(path);
+    if (!outputStat.isFile()) {
+      throw new Error("--out must be a file path, not a directory.");
+    }
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return;
+    }
+    throw error;
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of process.stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_INPUT_BYTES) {
+      throw new Error(`Stdin input is larger than ${MAX_INPUT_BYTES} bytes.`);
+    }
+    chunks.push(buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   fetchWithTimeout,
@@ -6,7 +6,8 @@ import {
   normalizeRequestTimeoutMs,
   normalizeRequiredStringConfig,
   parseJsonResponse,
-  readErrorResponseBody
+  readErrorResponseBody,
+  redactBearerTokens
 } from "./request-utils.js";
 
 describe("normalizeHttpBaseUrl", () => {
@@ -26,15 +27,29 @@ describe("normalizeHttpBaseUrl", () => {
       expect(() => normalizeHttpBaseUrl(value, "baseUrl")).toThrow("baseUrl must be a valid http(s) URL.");
     }
   });
+
+  it("rejects credentials in base URLs", () => {
+    for (const value of ["https://user@example.test/v1", "https://user:secret@example.test/v1"]) {
+      expect(() => normalizeHttpBaseUrl(value, "baseUrl")).toThrow("baseUrl must be a valid http(s) URL.");
+    }
+  });
+
+  it("rejects overlong base URLs before parsing", () => {
+    expect(() => normalizeHttpBaseUrl(`https://example.test/${"a".repeat(2_000)}`, "baseUrl")).toThrow(
+      "baseUrl must be at most 2000 characters."
+    );
+  });
 });
 
 describe("normalizeRequestTimeoutMs", () => {
   it("defaults and validates provider request timeouts", () => {
     expect(normalizeRequestTimeoutMs(undefined)).toBe(30_000);
-    expect(normalizeRequestTimeoutMs(123.9)).toBe(123);
+    expect(normalizeRequestTimeoutMs(123)).toBe(123);
     expect(() => normalizeRequestTimeoutMs(0)).toThrow("timeoutMs must be a positive integer.");
     expect(() => normalizeRequestTimeoutMs(0.5)).toThrow("timeoutMs must be a positive integer.");
+    expect(() => normalizeRequestTimeoutMs(123.9)).toThrow("timeoutMs must be a positive integer.");
     expect(() => normalizeRequestTimeoutMs(Number.NaN)).toThrow("timeoutMs must be a positive integer.");
+    expect(() => normalizeRequestTimeoutMs(300_001)).toThrow("timeoutMs must be at most 300000.");
   });
 });
 
@@ -47,6 +62,20 @@ describe("normalizeRequiredStringConfig", () => {
     for (const value of [undefined, "   ", "safe\nunsafe"]) {
       expect(() => normalizeRequiredStringConfig(value, "setting")).toThrow("setting must not be empty.");
     }
+  });
+
+  it("rejects overlong string configuration values", () => {
+    expect(() => normalizeRequiredStringConfig("x".repeat(2_001), "setting")).toThrow(
+      "setting must be at most 2000 characters."
+    );
+  });
+});
+
+describe("redactBearerTokens", () => {
+  it("redacts bearer credentials without removing surrounding error context", () => {
+    expect(redactBearerTokens("Authorization: Bearer custom.secret-token_123 failed")).toBe(
+      "Authorization: Bearer *** failed"
+    );
   });
 });
 
@@ -83,6 +112,30 @@ describe("fetchWithTimeout", () => {
     ).rejects.toThrow("provider timed out after 25 ms.");
   });
 
+  it("times out even when a custom fetch implementation ignores abort signals", async () => {
+    let signal: AbortSignal | undefined;
+    let aborted = false;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      signal = init?.signal instanceof AbortSignal ? init.signal : undefined;
+      signal?.addEventListener("abort", () => {
+        aborted = true;
+      });
+
+      return await new Promise<Response>(() => undefined);
+    };
+
+    await expect(
+      fetchWithTimeout(fetchImpl, "https://example.test", {}, {
+        timeoutMs: 5,
+        timeoutMessage: "provider hard timed out.",
+        failureMessage: "provider failed"
+      })
+    ).rejects.toThrow("provider hard timed out.");
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(true);
+    expect(aborted).toBe(true);
+  });
+
   it("wraps and redacts non-timeout network errors", async () => {
     const fetchImpl: typeof fetch = async () => {
       throw new Error("socket closed with sk-secret-token");
@@ -96,6 +149,33 @@ describe("fetchWithTimeout", () => {
         redact: (value) => value.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***")
       })
     ).rejects.toThrow("provider failed: socket closed with sk-***");
+  });
+
+  it("bounds and normalizes non-timeout network errors after redaction", async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error(`socket\n\u001b[31mclosed\u001b[0m for Bearer custom.secret-token ${"x".repeat(2_500)} hidden-tail`);
+    };
+
+    let thrown: unknown;
+    try {
+      await fetchWithTimeout(fetchImpl, "https://example.test", {}, {
+        timeoutMs: 25,
+        timeoutMessage: "provider timed out",
+        failureMessage: "provider failed",
+        redact: redactBearerTokens
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    const prefix = "provider failed: ";
+    expect(message.startsWith(`${prefix}socket closed for Bearer *** `)).toBe(true);
+    expect(message).toContain("[truncated]");
+    expect(message).not.toContain("\u001b");
+    expect(message).not.toContain("custom.secret-token");
+    expect(message).not.toContain("hidden-tail");
+    expect(message.length).toBeLessThanOrEqual(prefix.length + 2_000);
   });
 });
 
@@ -116,10 +196,83 @@ describe("parseJsonResponse", () => {
     );
   });
 
+  it("times out JSON response body reads that never finish", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const response = {
+        headers: new Headers(),
+        body: undefined,
+        text: async () => await new Promise<string>(() => undefined)
+      } as Response;
+      const pendingParse = parseJsonResponse(response, schema, "Provider", { timeoutMs: 5 });
+      const assertion = expect(pendingParse).rejects.toThrow("Provider response body timed out after 5 ms.");
+
+      await vi.advanceTimersByTimeAsync(5);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects oversized JSON responses from content-length before reading the body", async () => {
+    await expect(
+      parseJsonResponse(
+        new Response('{"value":"ok"}', {
+          headers: {
+            "content-length": "5000001"
+          }
+        }),
+        schema,
+        "Provider"
+      )
+    ).rejects.toThrow("Provider response is larger than 5000000 bytes.");
+  });
+
+  it("rejects oversized JSON responses while streaming bodies without content-length", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"value":"'));
+        controller.enqueue(new Uint8Array(5_000_001));
+        controller.enqueue(new TextEncoder().encode('"}'));
+        controller.close();
+      }
+    });
+
+    await expect(parseJsonResponse(new Response(stream), schema, "Provider")).rejects.toThrow(
+      "Provider response is larger than 5000000 bytes."
+    );
+  });
+
   it("wraps schema validation failures with field paths", async () => {
     await expect(parseJsonResponse(new Response('{"value":123}'), schema, "Provider")).rejects.toThrow(
       "Provider returned an unexpected response shape: value: Invalid input: expected string, received number"
     );
+  });
+
+  it("bounds and normalizes schema validation failure details", async () => {
+    const noisySchema = z.object({
+      value: z.string().superRefine((_value, context) => {
+        context.addIssue({
+          code: "custom",
+          message: `bad \u001b[31m${"x".repeat(1_000)} hidden-tail`
+        });
+      })
+    });
+
+    let thrown: unknown;
+    try {
+      await parseJsonResponse(new Response('{"value":"ok"}'), noisySchema, "Provider");
+    } catch (error) {
+      thrown = error;
+    }
+
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toContain("Provider returned an unexpected response shape:");
+    expect(message).toContain("[truncated]");
+    expect(message).not.toContain("\u001b");
+    expect(message).not.toContain("hidden-tail");
+    expect(message.length).toBeLessThanOrEqual(2_200);
   });
 });
 
@@ -144,5 +297,24 @@ describe("readErrorResponseBody", () => {
 
     expect(body).toBe(`${"x".repeat(4096)}... [truncated after 4096 bytes]`);
     expect(body).not.toContain("secret-tail");
+  });
+
+  it("omits error response bodies that never finish", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const response = {
+        headers: new Headers(),
+        body: undefined,
+        text: async () => await new Promise<string>(() => undefined)
+      } as Response;
+      const pendingBody = readErrorResponseBody(response, undefined, { timeoutMs: 5 });
+      const assertion = expect(pendingBody).resolves.toBe("[response body omitted after 5 ms]");
+
+      await vi.advanceTimersByTimeAsync(5);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

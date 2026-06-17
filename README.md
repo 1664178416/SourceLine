@@ -24,8 +24,9 @@ Use local sources:
 node packages/cli/dist/index.js check examples/answer.md --search local --sources examples/sources --report markdown
 ```
 
-Local source folders honor `.sourcelineignore` files in the current working directory and in the source folder, including `!` negation rules.
-SourceLine also keeps a best-effort local retrieval cache at `<sources>/.sourceline/cache/local-index.json` so repeated CLI runs can reuse unchanged Markdown/txt/HTML chunks. The cache stays inside your source folder, is ignored by git via `.sourceline/`, is rebuilt when the index schema changes, and can be deleted at any time.
+Local source folders honor `.sourcelineignore` files up to 1 MB in the current working directory and in the source folder, including `!` negation rules.
+SourceLine also keeps a best-effort local retrieval cache at `<sources>/.sourceline/cache/local-index.json` so repeated CLI runs can reuse unchanged Markdown/txt/HTML chunks. The cache stays inside your source folder, is ignored by git via `.sourceline/`, is rebuilt when indexed file contents or the index schema change, is ignored if it grows beyond 50 MB, and can be deleted at any time.
+Individual local source files larger than 2 MB are skipped so the in-memory retrieval index stays predictable.
 
 Inspect or clear the local retrieval cache:
 
@@ -40,8 +41,10 @@ Check a web page directly:
 node packages/cli/dist/index.js check https://example.com/article --report markdown
 ```
 
-SourceLine fetches `http` and `https` URLs, extracts readable text from HTML, and caps fetched input size to keep CLI runs predictable.
+SourceLine fetches `http` and `https` URLs, extracts readable text from HTML, and caps URL, file, and stdin/text input size to keep CLI runs predictable.
+Configuration files are capped at 1 MB before JSON parsing.
 Local `.html` and `.htm` input files are also cleaned into readable text before claim extraction.
+Evidence snippets, full evidence text, and long report metadata fields are capped so unusually large provider responses do not dominate LLM prompts or output files.
 
 Check piped text:
 
@@ -82,7 +85,9 @@ node packages/cli/dist/index.js check examples/answer.md --json
 ## Cloud Providers
 
 SourceLine asks for explicit confirmation before sending claim text or evidence snippets to cloud providers. In non-interactive runs, pass `--yes` or set `SOURCELINE_ALLOW_CLOUD=1`.
-Remote provider calls time out after 30 seconds by default. Use `--provider-timeout-ms`, `SOURCELINE_PROVIDER_TIMEOUT_MS`, or `providers.timeoutMs` in config to tune this for slow gateways.
+Remote provider calls time out after 30 seconds by default. Use `--provider-timeout-ms`, `SOURCELINE_PROVIDER_TIMEOUT_MS`, or `providers.timeoutMs` in config to tune this for slow gateways, up to 300000 ms.
+Claim extraction is bounded to 100 claims per run, and evidence retrieval is bounded to 20 results per claim.
+Generated search queries are capped to 5 per claim and 500 characters each before any search provider is called.
 
 OpenAI-compatible LLM with local sources:
 

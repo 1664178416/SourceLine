@@ -1,6 +1,10 @@
 import {
   failOnSchema,
   llmProviderSchema,
+  MAX_CLAIMS,
+  MAX_CONFIG_STRING_CHARS,
+  MAX_PROVIDER_TIMEOUT_MS,
+  MAX_RESULTS_PER_CLAIM,
   reportFormatSchema,
   searchProviderSchema,
   type FailOnLevel,
@@ -72,18 +76,25 @@ export function resolveCheckSettings(options: {
     searchProvider,
     sources,
     reportFormat: parseReportFormat(flags.report ?? config.reports?.defaultFormat ?? env.SOURCELINE_REPORT_FORMAT ?? "terminal"),
-    maxClaims: parsePositiveInteger(flags.maxClaims ?? config.checks?.maxClaims ?? env.SOURCELINE_MAX_CLAIMS, 30, "maxClaims"),
+    maxClaims: parsePositiveInteger(
+      flags.maxClaims ?? config.checks?.maxClaims ?? env.SOURCELINE_MAX_CLAIMS,
+      30,
+      "maxClaims",
+      MAX_CLAIMS
+    ),
     maxResultsPerClaim: parsePositiveInteger(
       flags.maxResults ?? config.search?.maxResultsPerClaim ?? env.SOURCELINE_MAX_RESULTS,
       5,
-      "maxResultsPerClaim"
+      "maxResultsPerClaim",
+      MAX_RESULTS_PER_CLAIM
     ),
     minConfidence: parseConfidence(flags.minConfidence ?? config.checks?.minConfidence ?? env.SOURCELINE_MIN_CONFIDENCE, 0.65),
     failOn: parseFailOn(flags.failOn ?? config.checks?.failOn ?? env.SOURCELINE_FAIL_ON ?? "never"),
     providerTimeoutMs: parsePositiveInteger(
       flags.providerTimeoutMs ?? config.providers?.timeoutMs ?? env.SOURCELINE_PROVIDER_TIMEOUT_MS,
       30_000,
-      "providerTimeoutMs"
+      "providerTimeoutMs",
+      MAX_PROVIDER_TIMEOUT_MS
     )
   };
 }
@@ -97,17 +108,26 @@ function parseOptionalNonEmptyString(value: string | undefined, label: string): 
   if (trimmed.length === 0) {
     throw new Error(`${label} must not be empty.`);
   }
+  if (hasControlCharacters(trimmed)) {
+    throw new Error(`${label} must not contain control characters.`);
+  }
+  if (trimmed.length > MAX_CONFIG_STRING_CHARS) {
+    throw new Error(`${label} must be at most ${MAX_CONFIG_STRING_CHARS} characters.`);
+  }
 
   return trimmed;
 }
 
 function parseOptionalHttpUrl(value: string | undefined, label: string): string | undefined {
-  const trimmed = parseOptionalNonEmptyString(value, label);
+  const trimmed = parseOptionalTrimmedString(value, label);
   if (trimmed === undefined) {
     return undefined;
   }
   if (hasControlCharacters(trimmed)) {
     throw new Error(`${label} must be a valid http(s) URL.`);
+  }
+  if (trimmed.length > MAX_CONFIG_STRING_CHARS) {
+    throw new Error(`${label} must be at most ${MAX_CONFIG_STRING_CHARS} characters.`);
   }
 
   let url: URL;
@@ -120,11 +140,27 @@ function parseOptionalHttpUrl(value: string | undefined, label: string): string 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`${label} must be a valid http(s) URL.`);
   }
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new Error(`${label} must be a valid http(s) URL.`);
+  }
   if (url.search.length > 0 || url.hash.length > 0) {
     throw new Error(`${label} must be a valid http(s) URL.`);
   }
 
   return url.toString();
+}
+
+function parseOptionalTrimmedString(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`${label} must not be empty.`);
+  }
+
+  return trimmed;
 }
 
 function hasControlCharacters(value: string): boolean {
@@ -170,28 +206,32 @@ function parseFailOn(value: string): FailOnLevel {
   return parsed.data;
 }
 
-function parsePositiveInteger(value: string | number | undefined, fallback: number, label: string): number {
+function parsePositiveInteger(value: string | number | undefined, fallback: number, label: string, max: number): number {
   if (value === undefined) {
     return fallback;
   }
 
+  let parsed: number;
   if (typeof value === "number") {
     if (!Number.isInteger(value) || value <= 0) {
       throw new Error(`${label} must be a positive integer.`);
     }
-    return value;
+    parsed = value;
+  } else {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new Error(`${label} must be a positive integer.`);
+    }
+
+    parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`${label} must be a positive integer.`);
+    }
   }
 
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`${label} must be a positive integer.`);
+  if (parsed > max) {
+    throw new Error(`${label} must be at most ${max}.`);
   }
-
-  const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive integer.`);
-  }
-
   return parsed;
 }
 

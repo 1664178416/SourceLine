@@ -116,6 +116,24 @@ describe("resolveCheckSettings", () => {
     expect(() =>
       resolveCheckSettings({
         flags: {
+          model: "safe\nunsafe"
+        },
+        env: {}
+      })
+    ).toThrow("model must not contain control characters.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          sources: "examples\nsources"
+        },
+        env: {}
+      })
+    ).toThrow("sources must not contain control characters.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
           baseUrl: "notaurl"
         },
         env: {}
@@ -143,6 +161,15 @@ describe("resolveCheckSettings", () => {
     expect(() =>
       resolveCheckSettings({
         flags: {
+          baseUrl: "https://user:secret@example.test/v1"
+        },
+        env: {}
+      })
+    ).toThrow("baseUrl must be a valid http(s) URL.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
           baseUrl: "https://example.test/v1?debug=true"
         },
         env: {}
@@ -158,6 +185,36 @@ describe("resolveCheckSettings", () => {
       })
     ).toThrow("baseUrl must be a valid http(s) URL.");
   });
+
+  it("rejects overlong string settings before runtime use", () => {
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          model: "m".repeat(2_001)
+        },
+        env: {}
+      })
+    ).toThrow("model must be at most 2000 characters.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          sources: "s".repeat(2_001)
+        },
+        env: {}
+      })
+    ).toThrow("sources must be at most 2000 characters.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          baseUrl: `https://example.test/${"a".repeat(2_000)}`
+        },
+        env: {}
+      })
+    ).toThrow("baseUrl must be at most 2000 characters.");
+  });
+
   it("returns helpful errors for unsupported enum values", () => {
     expect(() =>
       resolveCheckSettings({
@@ -214,6 +271,35 @@ describe("resolveCheckSettings", () => {
         env: {}
       })
     ).toThrow("minConfidence must be a number between 0 and 1.");
+  });
+
+  it("rejects numeric settings above bounded runtime limits", () => {
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          maxClaims: "101"
+        },
+        env: {}
+      })
+    ).toThrow("maxClaims must be at most 100.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          maxResults: "21"
+        },
+        env: {}
+      })
+    ).toThrow("maxResultsPerClaim must be at most 20.");
+
+    expect(() =>
+      resolveCheckSettings({
+        flags: {
+          providerTimeoutMs: "300001"
+        },
+        env: {}
+      })
+    ).toThrow("providerTimeoutMs must be at most 300000.");
   });
 
   it("resolves fail-on from flags, config, env, and defaults", () => {

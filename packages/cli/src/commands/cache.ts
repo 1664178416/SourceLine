@@ -7,6 +7,8 @@ type CacheCommandOptions = {
   json?: boolean;
 };
 
+const MAX_SOURCES_PATH_CHARS = 2_000;
+
 export function registerCacheCommand(program: Command): void {
   const cache = program.command("cache").description("Inspect and clear local SourceLine caches");
 
@@ -36,6 +38,12 @@ export function requireSources(options: CacheCommandOptions): string {
   if (!sources) {
     throw new Error("--sources is required.");
   }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(sources)) {
+    throw new Error("--sources must not contain control characters.");
+  }
+  if (sources.length > MAX_SOURCES_PATH_CHARS) {
+    throw new Error(`--sources must be at most ${MAX_SOURCES_PATH_CHARS} characters.`);
+  }
   return sources;
 }
 
@@ -48,6 +56,9 @@ export function formatCacheInfo(info: LocalIndexCacheInfo): string {
     `Schema: ${formatCacheSchema(info)}`,
     `Status: ${status}`,
     `Source files: ${info.sourceFiles} (${formatBytes(info.sourceBytes)})`,
+    `Skipped source files: ${info.skippedSourceFiles}`,
+    `Skipped oversized source files: ${info.skippedOversizedSourceFiles}`,
+    `Skipped over budget source files: ${info.skippedOverBudgetSourceFiles}`,
     `Cache entries: ${info.entries}`,
     `Current: ${info.currentEntries}`,
     `Stale: ${info.staleEntries}`,

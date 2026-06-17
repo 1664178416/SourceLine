@@ -236,6 +236,66 @@ describe("renderMarkdownReport", () => {
     expect(markdown).not.toContain("\u001b[31m");
   });
 
+  it("escapes raw HTML-looking text in Markdown fields", () => {
+    const report: SourceLineReport = {
+      schemaVersion: "1.0",
+      input: {
+        kind: "text",
+        name: "sample <img src=x onerror=alert(1)>",
+        hash: "abc123"
+      },
+      generatedAt: "2026-06-07T08:00:00.000Z",
+      summary: {
+        totalClaims: 1,
+        supported: 1,
+        partiallySupported: 0,
+        unsupported: 0,
+        contradicted: 0,
+        notEnoughEvidence: 0
+      },
+      checks: [
+        {
+          claim: {
+            id: "claim-1",
+            text: "Raw <script>alert(1)</script> should not become HTML.",
+            claimType: "technical",
+            importance: "medium",
+            searchQueries: ["raw html markdown"]
+          },
+          status: "supported",
+          confidence: 0.8,
+          evidence: [
+            {
+              source: {
+                id: "source-1",
+                title: "Evidence <b>title</b>",
+                url: "https://example.com/source",
+                retrievedAt: "2026-06-07T00:00:00.000Z",
+                snippet: "Snippet with <img src=x onerror=alert(1)> & text."
+              },
+              relation: "supports",
+              confidence: 0.8,
+              explanation: "Mock support."
+            }
+          ],
+          explanation: "Explanation with <iframe src=evil></iframe> & details.",
+          riskFlags: []
+        }
+      ]
+    };
+
+    const markdown = renderMarkdownReport(report);
+
+    expect(markdown).toContain("sample &lt;img src=x onerror=alert(1)&gt;");
+    expect(markdown).toContain("Raw &lt;script&gt;alert(1)&lt;/script&gt; should not become HTML.");
+    expect(markdown).toContain("[Evidence &lt;b&gt;title&lt;/b&gt;](https://example.com/source)");
+    expect(markdown).toContain("Snippet with &lt;img src=x onerror=alert(1)&gt; &amp; text.");
+    expect(markdown).toContain("Explanation with &lt;iframe src=evil&gt;&lt;/iframe&gt; &amp; details.");
+    expect(markdown).not.toContain("<script>");
+    expect(markdown).not.toContain("<img");
+    expect(markdown).not.toContain("<iframe");
+  });
+
 
   it("does not link unsafe evidence URL schemes", () => {
     const report: SourceLineReport = {
@@ -271,6 +331,7 @@ describe("renderMarkdownReport", () => {
                 id: "source-1",
                 title: "Unsafe [source]",
                 url: "javascript:alert(1)",
+                path: " notes/\u001b[31munsafe\u001b[0m\npath.md ",
                 retrievedAt: "2026-06-07T00:00:00.000Z"
               },
               relation: "supports",
@@ -286,7 +347,10 @@ describe("renderMarkdownReport", () => {
 
     const markdown = renderMarkdownReport(report);
 
-    expect(markdown).toContain("Unsafe \\[source\\] (supports, 0.80)");
+    expect(markdown).toContain("[Unsafe \\[source\\]](<notes/unsafe path.md>) (supports, 0.80)");
+    expect(markdown).not.toContain("javascript:alert");
+    expect(markdown).not.toContain("\\u001b");
+    expect(markdown).not.toContain("\\n");
     expect(markdown).not.toContain("[Unsafe \\[source\\]](javascript:alert(1))");
   });
 
@@ -447,6 +511,60 @@ describe("renderMarkdownReport", () => {
 
     expect(markdown).toContain("Spaced URL source (supports, 0.80)");
     expect(markdown).not.toContain("[Spaced URL source](<https://example.com/safe path>)");
+  });
+
+  it("does not render credentialed remote evidence URLs", () => {
+    const report: SourceLineReport = {
+      schemaVersion: "1.0",
+      input: {
+        kind: "text",
+        name: "sample",
+        hash: "abc123"
+      },
+      generatedAt: "2026-06-07T08:00:00.000Z",
+      summary: {
+        totalClaims: 1,
+        supported: 1,
+        partiallySupported: 0,
+        unsupported: 0,
+        contradicted: 0,
+        notEnoughEvidence: 0
+      },
+      checks: [
+        {
+          claim: {
+            id: "claim-1",
+            text: "Credentialed evidence URLs should not appear in Markdown reports.",
+            claimType: "technical",
+            importance: "medium",
+            searchQueries: ["credentialed evidence urls"]
+          },
+          status: "supported",
+          confidence: 0.8,
+          evidence: [
+            {
+              source: {
+                id: "source-1",
+                url: "https://user:secret@example.com/private",
+                retrievedAt: "2026-06-07T00:00:00.000Z"
+              },
+              relation: "supports",
+              confidence: 0.8,
+              explanation: "Mock support."
+            }
+          ],
+          explanation: "Mock explanation.",
+          riskFlags: []
+        }
+      ]
+    };
+
+    const markdown = renderMarkdownReport(report);
+
+    expect(markdown).toContain("source-1 (supports, 0.80)");
+    expect(markdown).not.toContain("user:secret");
+    expect(markdown).not.toContain("https://user");
+    expect(markdown).not.toContain("[source-1](https://user:secret@example.com/private)");
   });
 
   it("clamps confidence values and skips non-finite retrieval scores", () => {

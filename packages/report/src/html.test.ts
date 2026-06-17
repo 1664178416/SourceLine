@@ -58,7 +58,7 @@ describe("renderHtmlReport", () => {
 
     const html = renderHtmlReport(report);
     expect(html).toContain("SourceLine renders &lt;HTML&gt; reports.");
-    expect(html).toContain('<a href="https://example.com">Mock source</a>');
+    expect(html).toContain('<a href="https://example.com" rel="noopener noreferrer">Mock source</a>');
     expect(html).toContain('class="skip-link" href="#claims-heading"');
     expect(html).toContain('<main id="report-content">');
     expect(html).toContain('role="region" aria-label="Claim filters and export tools"');
@@ -147,6 +147,7 @@ describe("renderHtmlReport", () => {
                 id: "source-1",
                 title: "Unsafe source",
                 url: "javascript:alert(1)",
+                path: " notes/\u001b[31munsafe\u001b[0m\npath.md ",
                 retrievedAt: "2026-06-07T00:00:00.000Z"
               },
               relation: "supports",
@@ -161,8 +162,17 @@ describe("renderHtmlReport", () => {
     };
 
     const html = renderHtmlReport(report);
+    const embeddedJson = html.match(/<script type="application\/json" id="sourceline-report-data">([\s\S]*?)<\/script>/)?.[1];
+    const parsed = JSON.parse(embeddedJson ?? "{}") as SourceLineReport;
 
     expect(html).toContain("Unsafe source");
+    expect(html).toContain('<a href="notes/unsafe path.md">Unsafe source</a>');
+    expect(html).not.toContain('href="notes/unsafe path.md" rel=');
+    expect(parsed.checks[0]?.evidence[0]?.source.url).toBeUndefined();
+    expect(parsed.checks[0]?.evidence[0]?.source.path).toBe("notes/unsafe path.md");
+    expect(embeddedJson).not.toContain("javascript:alert");
+    expect(embeddedJson).not.toContain("\\n");
+    expect(embeddedJson).not.toContain("\\u001b");
     expect(html).not.toContain('href="javascript:alert(1)"');
   });
 
@@ -375,6 +385,63 @@ describe("renderHtmlReport", () => {
 
     expect(html).toContain("Spaced URL source");
     expect(html).not.toContain('href="https://example.com/safe path"');
+  });
+
+  it("does not render or embed credentialed remote evidence URLs", () => {
+    const report: SourceLineReport = {
+      schemaVersion: "1.0",
+      input: {
+        kind: "text",
+        name: "sample",
+        hash: "abc123"
+      },
+      generatedAt: "2026-06-07T08:00:00.000Z",
+      summary: {
+        totalClaims: 1,
+        supported: 1,
+        partiallySupported: 0,
+        unsupported: 0,
+        contradicted: 0,
+        notEnoughEvidence: 0
+      },
+      checks: [
+        {
+          claim: {
+            id: "claim-1",
+            text: "Credentialed evidence URLs should not appear in HTML reports.",
+            claimType: "technical",
+            importance: "medium",
+            searchQueries: ["credentialed evidence urls"]
+          },
+          status: "supported",
+          confidence: 0.8,
+          evidence: [
+            {
+              source: {
+                id: "source-1",
+                url: "https://user:secret@example.com/private",
+                retrievedAt: "2026-06-07T00:00:00.000Z"
+              },
+              relation: "supports",
+              confidence: 0.8,
+              explanation: "Mock support."
+            }
+          ],
+          explanation: "Mock explanation.",
+          riskFlags: []
+        }
+      ]
+    };
+
+    const html = renderHtmlReport(report);
+    const embeddedJson = html.match(/<script type="application\/json" id="sourceline-report-data">([\s\S]*?)<\/script>/)?.[1];
+    const parsed = JSON.parse(embeddedJson ?? "{}") as SourceLineReport;
+
+    expect(html).toContain("source-1");
+    expect(parsed.checks[0]?.evidence[0]?.source.url).toBeUndefined();
+    expect(html).not.toContain("user:secret");
+    expect(html).not.toContain("https://user");
+    expect(html).not.toContain('href="https://user:secret@example.com/private"');
   });
 
   it("clamps confidence values and skips non-finite retrieval scores", () => {

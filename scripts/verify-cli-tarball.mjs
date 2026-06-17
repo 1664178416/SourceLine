@@ -6,6 +6,9 @@ import { gunzipSync } from "node:zlib";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const defaultPackDir = ".tmp-pack";
+const MAX_TARBALL_BYTES = 20_000_000;
+const MAX_UNCOMPRESSED_TARBALL_BYTES = 50_000_000;
+const MAX_PACKAGE_MANIFEST_BYTES = 1_000_000;
 const target = process.argv[2] ?? defaultPackDir;
 const cliPackageVersion = readCliPackageVersion();
 const failures = [];
@@ -91,16 +94,20 @@ function verifyTarball(path) {
   const indexEntry = entries.find((entry) => entry.name === "package/dist/index.js");
   let manifest;
 
+  verifyUniqueEntryNames(names);
+
   for (const name of requiredEntries) {
     requireEntry(nameSet, name);
   }
 
-  for (const name of names) {
-    if (!isAllowedEntry(name)) {
-      fail(`Unexpected tarball entry: ${name}`);
+  for (const entry of entries) {
+    verifySafeEntryName(entry.name);
+    verifyRegularFileEntry(entry);
+    if (!isAllowedEntry(entry.name)) {
+      fail(`Unexpected tarball entry: ${entry.name}`);
     }
-    if (/\/src\/|\/tests?\/|__tests__\/|\.(?:test|spec)\.|\.tmp|\.sourceline\//.test(name)) {
-      fail(`Tarball contains local-only content: ${name}`);
+    if (/\/src\/|\/tests?\/|__tests__\/|\.(?:test|spec)\.|\.tmp|\.sourceline\//.test(entry.name)) {
+      fail(`Tarball contains local-only content: ${entry.name}`);
     }
   }
 
@@ -122,13 +129,31 @@ function verifyTarball(path) {
 }
 
 function readTarGz(path) {
-  const tar = gunzipSync(readFileSync(path));
+  const tarballStat = statSync(path);
+  if (!tarballStat.isFile()) {
+    throw new Error(`Tarball must be a file: ${path}.`);
+  }
+  if (tarballStat.size > MAX_TARBALL_BYTES) {
+    throw new Error(`Tarball is larger than ${MAX_TARBALL_BYTES} bytes.`);
+  }
+
+  const tar = gunzipTarball(path);
   const entries = [];
   let offset = 0;
+  let foundEnd = false;
 
   while (offset + 512 <= tar.length) {
     const header = tar.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) {
+    if (isZeroBlock(header)) {
+      foundEnd = true;
+      const secondEndBlock = tar.subarray(offset + 512, offset + 1024);
+      const trailing = tar.subarray(offset + 1024);
+      if (secondEndBlock.length < 512 || !isZeroBlock(secondEndBlock)) {
+        throw new Error("Tarball is missing the second end-of-archive block.");
+      }
+      if (!trailing.every((byte) => byte === 0)) {
+        throw new Error("Tarball contains non-zero data after the end-of-archive marker.");
+      }
       break;
     }
 
@@ -138,10 +163,16 @@ function readTarGz(path) {
     const mode = parseTarOctal(modeText);
     const sizeText = readNullTerminated(header, 124, 12).trim();
     const size = parseTarOctal(sizeText);
+    const checksumText = readNullTerminated(header, 148, 8).trim();
+    const checksum = parseTarOctal(checksumText);
+    const typeflag = header[156] === 0 ? "" : String.fromCharCode(header[156]);
     const fullName = prefix ? `${prefix}/${name}` : name;
     const contentStart = offset + 512;
     const contentEnd = contentStart + size;
 
+    if (!Number.isFinite(checksum) || checksum !== tarHeaderChecksum(header)) {
+      throw new Error(`Invalid tar entry checksum for ${fullName || "<empty>"}.`);
+    }
     if (!Number.isFinite(mode) || mode < 0) {
       throw new Error(`Invalid tar entry mode for ${fullName || "<empty>"}.`);
     }
@@ -151,6 +182,7 @@ function readTarGz(path) {
 
     entries.push({
       name: fullName,
+      typeflag,
       mode,
       content: tar.subarray(contentStart, contentEnd)
     });
@@ -158,7 +190,26 @@ function readTarGz(path) {
     offset = contentStart + Math.ceil(size / 512) * 512;
   }
 
+  if (!foundEnd) {
+    throw new Error("Tarball is missing the end-of-archive marker.");
+  }
+
   return entries;
+}
+
+function gunzipTarball(path) {
+  try {
+    return gunzipSync(readFileSync(path), { maxOutputLength: MAX_UNCOMPRESSED_TARBALL_BYTES });
+  } catch (error) {
+    if (isMaxOutputLengthError(error)) {
+      throw new Error(`Tarball expands to more than ${MAX_UNCOMPRESSED_TARBALL_BYTES} bytes.`);
+    }
+    throw error;
+  }
+}
+
+function isMaxOutputLengthError(error) {
+  return isRecord(error) && error.code === "ERR_BUFFER_TOO_LARGE";
 }
 
 function parseTarOctal(value) {
@@ -169,6 +220,18 @@ function parseTarOctal(value) {
 
   const parsed = Number.parseInt(normalized, 8);
   return Number.isSafeInteger(parsed) ? parsed : Number.NaN;
+}
+
+function tarHeaderChecksum(header) {
+  let sum = 0;
+  for (let index = 0; index < header.length; index += 1) {
+    sum += index >= 148 && index < 156 ? 0x20 : header[index];
+  }
+  return sum;
+}
+
+function isZeroBlock(block) {
+  return block.length === 512 && block.every((byte) => byte === 0);
 }
 
 function readNullTerminated(buffer, start, length) {
@@ -182,7 +245,18 @@ function readNullTerminated(buffer, start, length) {
 
 function readCliPackageVersion() {
   const manifestPath = join(repoRoot, "packages", "cli", "package.json");
+  const manifestStat = statSync(manifestPath);
+  if (!manifestStat.isFile()) {
+    throw new Error("packages/cli/package.json must be a file.");
+  }
+  if (manifestStat.size > MAX_PACKAGE_MANIFEST_BYTES) {
+    throw new Error(`packages/cli/package.json is larger than ${MAX_PACKAGE_MANIFEST_BYTES} bytes.`);
+  }
+
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!isRecord(manifest)) {
+    throw new Error("packages/cli/package.json must be a JSON object.");
+  }
 
   if (typeof manifest.version !== "string" || manifest.version.length === 0) {
     throw new Error("packages/cli/package.json must define a version.");
@@ -197,6 +271,10 @@ function verifyPackageJson(raw) {
     manifest = JSON.parse(raw);
   } catch {
     fail("package/package.json is not valid JSON.");
+    return;
+  }
+  if (!isRecord(manifest)) {
+    fail("package/package.json must be a JSON object.");
     return;
   }
 
@@ -221,6 +299,10 @@ function verifyPackageJson(raw) {
   const dependencySections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
   for (const section of dependencySections) {
     const dependencies = manifest[section] ?? {};
+    if (!isRecord(dependencies)) {
+      fail(`package/package.json ${section} must be an object.`);
+      continue;
+    }
     for (const [name, version] of Object.entries(dependencies)) {
       if (typeof version === "string" && version.startsWith("workspace:")) {
         fail(`${section}.${name} was not rewritten from workspace protocol.`);
@@ -253,8 +335,9 @@ function extractBareModuleSpecifiers(source) {
   const specifiers = [];
   const importPattern = /(?:import|export)\s+(?:[^'";]+\s+from\s+)?["']([^"']+)["']/g;
   const dynamicImportPattern = /import\(\s*["']([^"']+)["']\s*\)/g;
+  const requirePattern = /\brequire\(\s*["']([^"']+)["']\s*\)/g;
 
-  for (const pattern of [importPattern, dynamicImportPattern]) {
+  for (const pattern of [importPattern, dynamicImportPattern, requirePattern]) {
     let match;
     while ((match = pattern.exec(source))) {
       const specifier = match[1];
@@ -303,6 +386,35 @@ function requireEntry(nameSet, name) {
   }
 }
 
+function verifyUniqueEntryNames(names) {
+  let previous;
+  for (const name of names) {
+    if (name === previous) {
+      fail(`Duplicate tarball entry: ${name}`);
+    }
+    previous = name;
+  }
+}
+
+function verifySafeEntryName(name) {
+  if (
+    name.length === 0 ||
+    name.startsWith("/") ||
+    name.startsWith("\\") ||
+    name.includes("\\") ||
+    name.split("/").includes("..") ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(name)
+  ) {
+    fail(`Unsafe tarball entry name: ${formatEntryName(name)}`);
+  }
+}
+
+function verifyRegularFileEntry(entry) {
+  if (entry.typeflag !== "" && entry.typeflag !== "0") {
+    fail(`Tarball entry must be a regular file: ${entry.name}`);
+  }
+}
+
 function isAllowedEntry(name) {
   return name === "package/package.json" || /^package\/dist\/.+\.(?:js|js\.map|d\.ts|d\.ts\.map)$/.test(name);
 }
@@ -313,4 +425,8 @@ function fail(message) {
 
 function formatError(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatEntryName(name) {
+  return name.length === 0 ? "<empty>" : JSON.stringify(name);
 }

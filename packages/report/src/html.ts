@@ -1,5 +1,6 @@
 import type { ClaimCheck, EvidenceItem, SourceLineReport } from "@sourceline/core";
 import { sanitizeReport } from "./sanitize.js";
+import { isCredentiallessHttpUrl } from "./url-safety.js";
 
 export function renderHtmlReport(report: SourceLineReport): string {
   report = sanitizeReport(report);
@@ -368,9 +369,7 @@ function renderEvidence(evidence: EvidenceItem): string {
   const title = evidence.source.title ?? evidence.source.url ?? evidence.source.path ?? evidence.source.id;
   const location = evidence.source.url ?? evidence.source.path;
   const safeHref = location ? formatSafeHref(location) : undefined;
-  const linkedTitle = safeHref
-    ? `<a href="${escapeAttribute(safeHref)}">${escapeHtml(title)}</a>`
-    : escapeHtml(title);
+  const linkedTitle = safeHref ? renderEvidenceLink(safeHref, title) : escapeHtml(title);
   const snippet = evidence.source.snippet ? `<div class="muted">${escapeHtml(evidence.source.snippet)}</div>` : "";
   const retrieval = renderRetrieval(evidence);
 
@@ -383,13 +382,18 @@ function formatSafeHref(value: string): string | undefined {
     return undefined;
   }
   if (/^https?:\/\//i.test(trimmed)) {
-    return /[\s<>]/.test(trimmed) ? undefined : trimmed;
+    return /[\s<>]/.test(trimmed) || !isCredentiallessHttpUrl(trimmed) ? undefined : trimmed;
   }
   if (!trimmed.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
     return trimmed.replace(/\\/g, "/").replace(/</g, "%3C").replace(/>/g, "%3E");
   }
 
   return undefined;
+}
+
+function renderEvidenceLink(href: string, title: string): string {
+  const rel = /^https?:\/\//i.test(href) ? ' rel="noopener noreferrer"' : "";
+  return `<a href="${escapeAttribute(href)}"${rel}>${escapeHtml(title)}</a>`;
 }
 
 function hasHrefControlCharacters(value: string): boolean {

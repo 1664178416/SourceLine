@@ -8,6 +8,7 @@ import type {
   SearchResult,
   VerificationStatus
 } from "@sourceline/core";
+import { normalizeSearchRequest } from "./search-utils.js";
 
 export type MockProviderOptions = {
   now?: () => Date;
@@ -54,19 +55,24 @@ export function createMockSearchProvider(options: MockProviderOptions = {}): Sea
   return {
     name: "mock",
     async search(query) {
-      return Array.from({ length: Math.min(query.maxResults, 2) }, (_, index): SearchResult => {
+      const request = normalizeSearchRequest(query.query, query.maxResults);
+      if (!request) {
+        return [];
+      }
+
+      return Array.from({ length: Math.min(request.maxResults, 2) }, (_, index): SearchResult => {
         const rank = index + 1;
-        const slug = slugify(`${rank}-${query.query}`);
+        const slug = slugify(`${rank}-${request.query}`);
 
         return {
           id: `mock-source-${slug}`,
-          title: `Mock source ${rank}: ${query.query.slice(0, 72)}`,
+          title: `Mock source ${rank}: ${request.query.slice(0, 72)}`,
           url: `https://example.com/sourceline/mock/${slug}`,
           retrievedAt: now().toISOString(),
-          snippet: `Mock evidence for "${query.query}". Connect Tavily or Brave to replace this with live sources.`,
+          snippet: `Mock evidence for "${request.query}". Connect Tavily or Brave to replace this with live sources.`,
           provider: "mock",
           rank,
-          query: query.query
+          query: request.query
         };
       });
     }

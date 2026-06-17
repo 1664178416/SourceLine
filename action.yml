@@ -126,6 +126,11 @@ runs:
         sourceline_allow_cloud="$(trim_input "$SOURCELINE_ALLOW_CLOUD_INPUT")"
         sourceline_fail_on="$(trim_input "$SOURCELINE_FAIL_ON_INPUT")"
 
+        if [ -z "$sourceline_input" ]; then
+          echo "::error::SourceLine input is required after trimming whitespace." >&2
+          exit 1
+        fi
+
         args=(
           "packages/cli/dist/index.js"
           "check"
