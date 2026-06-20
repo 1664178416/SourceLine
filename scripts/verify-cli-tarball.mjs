@@ -9,6 +9,8 @@ const defaultPackDir = ".tmp-pack";
 const MAX_TARBALL_BYTES = 20_000_000;
 const MAX_UNCOMPRESSED_TARBALL_BYTES = 50_000_000;
 const MAX_PACKAGE_MANIFEST_BYTES = 1_000_000;
+const MAX_FAILURE_MESSAGE_CHARS = 2_000;
+const TRUNCATION_MARKER = "... [truncated]";
 const target = process.argv[2] ?? defaultPackDir;
 const cliPackageVersion = readCliPackageVersion();
 const failures = [];
@@ -420,13 +422,35 @@ function isAllowedEntry(name) {
 }
 
 function fail(message) {
-  failures.push(message);
+  failures.push(normalizeFailureMessage(message));
 }
 
 function formatError(error) {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
+  return normalizeFailureMessage(message);
 }
 
 function formatEntryName(name) {
-  return name.length === 0 ? "<empty>" : JSON.stringify(name);
+  return name.length === 0 ? "<empty>" : JSON.stringify(normalizeFailureMessage(name));
+}
+
+function normalizeFailureMessage(value) {
+  const normalized = stripAnsi(value)
+    .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= MAX_FAILURE_MESSAGE_CHARS) {
+    return normalized;
+  }
+  if (MAX_FAILURE_MESSAGE_CHARS <= TRUNCATION_MARKER.length) {
+    return normalized.slice(0, MAX_FAILURE_MESSAGE_CHARS);
+  }
+
+  return `${normalized.slice(0, MAX_FAILURE_MESSAGE_CHARS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+}
+
+function stripAnsi(value) {
+  return value
+    .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }

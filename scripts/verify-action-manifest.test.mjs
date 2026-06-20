@@ -158,6 +158,24 @@ describe("verify-action-manifest", () => {
     });
   });
 
+  it("normalizes noisy action manifest read failures onto safe lines", async () => {
+    await withTempDir(async (dir) => {
+      const actionPath = join(dir, `bad\n\u001b[31mred\u001b[0m-${"x".repeat(2_200)}.yml`);
+
+      const result = await runVerifier(actionPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Could not read action manifest");
+      expect(result.stderr).toContain("[truncated]");
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\nred");
+      expect(result.stderr).not.toContain("x".repeat(2_100));
+      for (const line of result.stderr.trim().split("\n").slice(1)) {
+        expect(line).toMatch(/^- [^\n\r]*$/);
+      }
+    });
+  });
+
   it("rejects oversized action manifests before reading them", async () => {
     await withTempDir(async (dir) => {
       const actionPath = join(dir, "action.yml");

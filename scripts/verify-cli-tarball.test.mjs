@@ -109,7 +109,27 @@ describe("verify-cli-tarball", () => {
       expect(result.stderr).toContain('Unsafe tarball entry name: "package/dist/../escape.js"');
       expect(result.stderr).toContain('Unsafe tarball entry name: "package\\\\dist\\\\slash.js"');
       expect(result.stderr).toContain('Unsafe tarball entry name: "/package/dist/absolute.js"');
-      expect(result.stderr).toContain('Unsafe tarball entry name: "package/dist/bad\\nname.js"');
+      expect(result.stderr).toContain('Unsafe tarball entry name: "package/dist/bad name.js"');
+    });
+  });
+
+  it("normalizes noisy unsafe tarball entry names onto safe lines", async () => {
+    await withTempDir(async (dir) => {
+      const tarball = await writeTarball(dir, `sourceline-${cliVersion}.tgz`, [
+        ...createValidEntries(),
+        { name: `package/dist/bad\n\u001b[31mred\u001b[0m-${"x".repeat(2_200)}.js`, content: "export {};\n" }
+      ]);
+
+      const result = await runVerifier(tarball);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Unsafe tarball entry name:");
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\\u001b");
+      expect(result.stderr).not.toContain("\nred");
+      for (const line of result.stderr.trim().split("\n").slice(1)) {
+        expect(line).toMatch(/^- [^\n\r]*$/);
+      }
     });
   });
 

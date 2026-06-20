@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const actionPath = process.argv[2] ? resolve(process.argv[2]) : join(repoRoot, "action.yml");
 const MAX_ACTION_MANIFEST_BYTES = 1_000_000;
+const MAX_FAILURE_MESSAGE_CHARS = 2_000;
+const TRUNCATION_MARKER = "... [truncated]";
 const failures = [];
 const raw = readActionManifest(actionPath);
 
@@ -149,7 +151,7 @@ if (failures.length > 0) {
 }
 
 function fail(message) {
-  failures.push(message);
+  failures.push(normalizeFailureMessage(message));
 }
 
 function readActionManifest(path) {
@@ -201,5 +203,27 @@ function escapeRegExp(value) {
 }
 
 function formatError(error) {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
+  return normalizeFailureMessage(message);
+}
+
+function normalizeFailureMessage(value) {
+  const normalized = stripAnsi(value)
+    .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= MAX_FAILURE_MESSAGE_CHARS) {
+    return normalized;
+  }
+  if (MAX_FAILURE_MESSAGE_CHARS <= TRUNCATION_MARKER.length) {
+    return normalized.slice(0, MAX_FAILURE_MESSAGE_CHARS);
+  }
+
+  return `${normalized.slice(0, MAX_FAILURE_MESSAGE_CHARS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+}
+
+function stripAnsi(value) {
+  return value
+    .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }

@@ -7,9 +7,12 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const workspaceRoot = process.argv[2] ? resolve(process.argv[2]) : repoRoot;
 const MAX_PACKAGE_NAME_LENGTH = 214;
 const MAX_MANIFEST_BYTES = 1_000_000;
+const MAX_FAILURE_MESSAGE_CHARS = 2_000;
+const MAX_DYNAMIC_FIELD_CHARS = 300;
 const PACKAGE_NAME_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._~-]*$/;
 const PACKAGE_MANAGER_PATTERN = /^pnpm@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const SUPPORTED_WORKSPACE_TOP_LEVEL_KEYS = new Set(["allowBuilds", "packages"]);
+const TRUNCATION_MARKER = "... [truncated]";
 const failures = [];
 
 const rootManifest = readManifest(join(workspaceRoot, "package.json"));
@@ -257,21 +260,26 @@ function verifyInternalDependencies(label, manifest, packageNames) {
       continue;
     }
     for (const [name, version] of Object.entries(dependencies)) {
+      const dependencyPath = formatDependencyPath(section, name);
       if (!isValidPackageName(name)) {
-        fail(`${label} ${section}.${name} must be a lowercase npm package name (name or @scope/name).`);
+        fail(`${label} ${dependencyPath} must be a lowercase npm package name (name or @scope/name).`);
       }
       if (typeof version !== "string" || version.length === 0 || /[\u0000-\u001f\u007f]/.test(version)) {
-        fail(`${label} ${section}.${name} must be a non-empty string without control characters.`);
+        fail(`${label} ${dependencyPath} must be a non-empty string without control characters.`);
         continue;
       }
       if (!packageNames.has(name)) {
         continue;
       }
       if (version !== "workspace:*") {
-        fail(`${label} ${section}.${name} must use workspace:* before packing.`);
+        fail(`${label} ${dependencyPath} must use workspace:* before packing.`);
       }
     }
   }
+}
+
+function formatDependencyPath(section, name) {
+  return `${section}.${normalizeFailureMessage(name, MAX_DYNAMIC_FIELD_CHARS)}`;
 }
 
 function isRecord(value) {
@@ -309,9 +317,31 @@ function formatManifestPath(path) {
 }
 
 function fail(message) {
-  failures.push(message);
+  failures.push(normalizeFailureMessage(message));
 }
 
 function formatError(error) {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
+  return normalizeFailureMessage(message);
+}
+
+function normalizeFailureMessage(value, maxLength = MAX_FAILURE_MESSAGE_CHARS) {
+  const normalized = stripAnsi(value)
+    .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  if (maxLength <= TRUNCATION_MARKER.length) {
+    return normalized.slice(0, maxLength);
+  }
+
+  return `${normalized.slice(0, maxLength - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+}
+
+function stripAnsi(value) {
+  return value
+    .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }

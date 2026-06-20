@@ -242,6 +242,30 @@ describe("verify-workspace-manifests", () => {
     });
   });
 
+  it("normalizes noisy workspace manifest failures onto safe lines", async () => {
+    await withWorkspace(async (dir) => {
+      await writeWorkspace(dir, {
+        cli: {
+          dependencies: {
+            [`Bad\n\u001b[31mred\u001b[0m${"x".repeat(2_200)}`]: "^1.0.0"
+          }
+        }
+      });
+
+      const result = await runVerifier(dir);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("must be a lowercase npm package name");
+      expect(result.stderr).toContain("[truncated]");
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\nred");
+      expect(result.stderr).not.toContain("x".repeat(2_100));
+      for (const line of result.stderr.trim().split("\n").slice(1)) {
+        expect(line).toMatch(/^- [^\n\r]*$/);
+      }
+    });
+  });
+
   it("rejects invalid dependency versions", async () => {
     await withWorkspace(async (dir) => {
       await writeWorkspace(dir, {
