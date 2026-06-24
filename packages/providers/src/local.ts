@@ -24,6 +24,14 @@ const MAX_LOCAL_RESULT_TEXT_CHARS = 20_000;
 const MAX_LOCAL_RETRIEVAL_EXPLANATION_CHARS = 4_000;
 const MAX_LOCAL_MATCHED_TERMS = 50;
 const LOCAL_SOURCE_READ_CHUNK_BYTES = 64_000;
+const HIDDEN_HTML_ELEMENT_PATTERN = new RegExp(
+  String.raw`<([a-z][\w:-]*)\b(?=[^>]*(?:${[
+    String.raw`\saria-hidden\s*=\s*(?:"true"|'true'|true)(?=\s|>|\/)`,
+    String.raw`\shidden(?:\s|=|>|\/)`,
+    String.raw`\sstyle\s*=\s*(?:"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"]*"|'[^']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^']*')`
+  ].join("|")}))[^>]*>[\s\S]*?<\/\1>`,
+  "gi"
+);
 const cacheWriteLocks = new Map<string, Promise<void>>();
 
 export type LocalSearchProviderOptions = {
@@ -1448,8 +1456,11 @@ function extractTitle(text: string): string | undefined {
 }
 
 function extractHtmlTitle(html: string): string | undefined {
+  const visibleHead = visibleHtmlHead(html);
+  const visibleBody = visibleHtmlBody(html);
   const rawTitle =
-    html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
+    visibleHead.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ??
+    visibleBody.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
   if (!rawTitle) {
     return undefined;
   }
@@ -1465,12 +1476,7 @@ function firstMeaningfulLine(text: string): string | undefined {
 }
 
 function htmlToText(html: string): string {
-  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
-
-  return body
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+  return visibleHtmlBody(html)
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)\b[^>]*>/gi, "\n\n")
     .replace(/<\/(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)>/gi, "\n\n")
@@ -1492,6 +1498,33 @@ function htmlToText(html: string): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function visibleHtmlBody(html: string): string {
+  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+  return removeHiddenHtmlElements(removeHtmlComments(body))
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
+}
+
+function removeHiddenHtmlElements(html: string): string {
+  return html.replace(HIDDEN_HTML_ELEMENT_PATTERN, " ");
+}
+
+function visibleHtmlHead(html: string): string {
+  const head = html.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
+  return removeHtmlComments(head)
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
+}
+
+function removeHtmlComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, " ");
 }
 
 function decodeHtmlCodePoint(value: string, radix: number, fallback: string): string {

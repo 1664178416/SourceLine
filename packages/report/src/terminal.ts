@@ -1,22 +1,31 @@
 import type { ClaimCheck, SourceLineReport } from "@sourceline/core";
 import { sanitizeReport } from "./sanitize.js";
 
+const MAX_TERMINAL_LINE_TEXT_CHARS = 240;
+const TRUNCATION_MARKER = "... [truncated]";
+
 export function renderTerminalReport(report: SourceLineReport): string {
   report = sanitizeReport(report);
   const reviewItems = report.checks.filter(shouldShowInReview);
+  const shownReviewItems = reviewItems.slice(0, 8);
+  const omittedReviewItems = reviewItems.length - shownReviewItems.length;
   const inputName = formatTerminalLine(report.input.name ?? report.input.kind) || report.input.kind;
   const lines: string[] = [
     "SourceLine Report",
     `Input: ${inputName}`,
-    `Claims: ${report.summary.totalClaims} | Supported: ${report.summary.supported} | Partial: ${report.summary.partiallySupported} | Unsupported: ${report.summary.unsupported} | Review: ${reviewItems.length}`,
+    `Claims: ${report.summary.totalClaims} | Review: ${reviewItems.length}`,
+    `Status: Supported ${report.summary.supported} | Partial ${report.summary.partiallySupported} | Unsupported ${report.summary.unsupported} | Contradicted ${report.summary.contradicted} | No Evidence ${report.summary.notEnoughEvidence}`,
     ""
   ];
 
   if (reviewItems.length > 0) {
     lines.push("Needs review:");
-    reviewItems.slice(0, 8).forEach((check) => {
+    shownReviewItems.forEach((check) => {
       lines.push(`- [${check.status}] ${formatTerminalLine(check.claim.text) || "(empty claim)"}`);
     });
+    if (omittedReviewItems > 0) {
+      lines.push(`- ... ${omittedReviewItems} more claim${omittedReviewItems === 1 ? "" : "s"} omitted from terminal summary`);
+    }
   } else if (report.checks.length === 0) {
     lines.push("No factual claims were detected.");
   } else {
@@ -27,10 +36,14 @@ export function renderTerminalReport(report: SourceLineReport): string {
 }
 
 function formatTerminalLine(value: string): string {
-  return stripAnsi(value)
+  const normalized = stripAnsi(value)
     .replace(/\s+/g, " ")
     .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "")
     .trim();
+  if (normalized.length <= MAX_TERMINAL_LINE_TEXT_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, MAX_TERMINAL_LINE_TEXT_CHARS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
 }
 
 function stripAnsi(value: string): string {

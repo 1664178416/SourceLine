@@ -251,6 +251,87 @@ describe("createLocalSearchProvider", () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("ignores hidden and decorative HTML content in local source folders", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-template-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "template.html"),
+        `<!doctype html>
+        <html>
+          <head>
+            <!-- <title>Comment Fake Title</title> -->
+            <script>const fake = "<title>Script Fake Title</title>";</script>
+            <title>Head Published Title</title>
+          </head>
+          <body>
+            <!-- <h1>Comment Hidden Title</h1><p>commentonly text should not be indexed.</p> -->
+            <template><h1>Hidden Draft Title</h1><p>templatedraftonly hidden content should not be indexed.</p></template>
+            <svg><title>Decorative Icon Title</title><text>svgicononly hidden label should not be indexed.</text></svg>
+            <div hidden><h1>Hidden Attribute Title</h1><p>hiddenattronly text should not be indexed.</p></div>
+            <section aria-hidden="true"><h1>Aria Hidden Title</h1><p>ariahiddenonly text should not be indexed.</p></section>
+            <aside style="display:none"><h1>Display None Title</h1><p>displaynoneonly text should not be indexed.</p></aside>
+            <div style="color:red; visibility: hidden"><h1>Visibility Hidden Title</h1><p>visibilityhiddenonly text should not be indexed.</p></div>
+            <h1>Visible Published Title</h1>
+            <p>Visible published evidence marker should be indexed.</p>
+          </body>
+        </html>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({
+        rootDir,
+        now: () => new Date("2026-06-07T08:00:00.000Z")
+      });
+
+      const hiddenTokens = [
+        "templatedraftonly",
+        "svgicononly",
+        "hiddenattronly",
+        "ariahiddenonly",
+        "displaynoneonly",
+        "visibilityhiddenonly",
+        "commentonly"
+      ];
+      const hiddenResults = await Promise.all(
+        hiddenTokens.map((token, index) =>
+          provider.search({
+            claimId: `hidden-${index + 1}`,
+            query: token,
+            maxResults: 1
+          })
+        )
+      );
+      const visibleResults = await provider.search({
+        claimId: "visible",
+        query: "visible published evidence marker",
+        maxResults: 1
+      });
+      const rawCache = await readFile(join(rootDir, ".sourceline", "cache", "local-index.json"), "utf8");
+      const cache = JSON.parse(rawCache) as { entries?: Array<{ document?: { text?: string } }> };
+
+      expect(hiddenResults).toEqual(hiddenTokens.map(() => []));
+      expect(visibleResults[0]?.title).toContain("Head Published Title");
+      expect(visibleResults[0]?.title).not.toContain("Comment Fake Title");
+      expect(visibleResults[0]?.title).not.toContain("Comment Hidden Title");
+      expect(visibleResults[0]?.title).not.toContain("Script Fake Title");
+      expect(visibleResults[0]?.title).not.toContain("Hidden Draft Title");
+      expect(visibleResults[0]?.title).not.toContain("Decorative Icon Title");
+      expect(visibleResults[0]?.title).not.toContain("Hidden Attribute Title");
+      expect(visibleResults[0]?.title).not.toContain("Aria Hidden Title");
+      expect(visibleResults[0]?.title).not.toContain("Display None Title");
+      expect(visibleResults[0]?.title).not.toContain("Visibility Hidden Title");
+      expect(visibleResults[0]?.snippet).toContain("Visible published evidence marker");
+      expect(cache.entries?.[0]?.document?.text).toBe(
+        "Visible Published Title\n\nVisible published evidence marker should be indexed."
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes a reusable local index cache after searching", async () => {
     const rootDir = join(tmpdir(), `sourceline-cache-write-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });

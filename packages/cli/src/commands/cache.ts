@@ -71,6 +71,10 @@ export function formatCacheInfo(info: LocalIndexCacheInfo): string {
   if (info.invalidReason) {
     lines.push(`Reason: ${info.invalidReason}`);
   }
+  const hint = formatCacheHint(info);
+  if (hint) {
+    lines.push(`Hint: ${hint}`);
+  }
 
   return `${lines.join("\n")}\n`;
 }
@@ -100,6 +104,29 @@ function formatCacheStatus(info: LocalIndexCacheInfo): string {
     return pc.yellow("needs refresh");
   }
   return pc.green("ready");
+}
+
+function formatCacheHint(info: LocalIndexCacheInfo): string | undefined {
+  const sourcesArg = formatShellArg(info.rootDir);
+  if (!info.exists) {
+    return `Re-run your local check command with \`--search local --sources ${sourcesArg}\` to build the local retrieval cache.`;
+  }
+  if (!info.valid) {
+    return `Run \`sourceline cache clear --sources ${sourcesArg}\` and then re-run local search to rebuild the cache.`;
+  }
+  if (info.staleEntries > 0 || info.missingEntries > 0 || info.uncachedSourceFiles > 0) {
+    return `Re-run your local check command with \`--search local --sources ${sourcesArg}\` to refresh stale, missing, or uncached source entries.`;
+  }
+
+  return undefined;
+}
+
+function formatShellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:=-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function formatBytes(bytes: number): string {
