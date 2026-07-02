@@ -1460,12 +1460,34 @@ function extractHtmlTitle(html: string): string | undefined {
   const visibleBody = visibleHtmlBody(html);
   const rawTitle =
     visibleHead.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ??
+    extractHeadlessHtmlTitle(html) ??
     visibleBody.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
   if (!rawTitle) {
     return undefined;
   }
 
   return htmlToText(rawTitle).replace(/\s+/g, " ").trim() || undefined;
+}
+
+function extractHeadlessHtmlTitle(html: string): string | undefined {
+  if (/<head\b/i.test(html) || /<body\b/i.test(html)) {
+    return undefined;
+  }
+
+  const metadataPrefix = sanitizeHeadlessHtmlTitleSource(html)
+    .replace(/<!doctype\b[^>]*>/gi, " ")
+    .replace(/^\s*<html\b[^>]*>/i, "")
+    .match(/^\s*(?:<(?:meta|link|base)\b[^>]*>\s*)*<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  return metadataPrefix?.[1];
+}
+
+function sanitizeHeadlessHtmlTitleSource(html: string): string {
+  return removeHtmlComments(html)
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
 }
 
 function firstMeaningfulLine(text: string): string | undefined {

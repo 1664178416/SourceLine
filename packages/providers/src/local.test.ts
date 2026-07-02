@@ -252,6 +252,70 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it("uses metadata titles from headless HTML fragments", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-fragment-title-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "fragment.html"),
+        `<meta charset="utf-8">
+        <title>Fragment Evidence Portal</title>
+        <p>Headless HTML fragments can still provide local SourceLine evidence.</p>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({
+        rootDir,
+        now: () => new Date("2026-06-07T08:00:00.000Z")
+      });
+
+      const results = await provider.search({
+        claimId: "claim-1",
+        query: "Headless HTML fragments SourceLine evidence",
+        maxResults: 1
+      });
+
+      expect(results[0]?.title).toContain("Fragment Evidence Portal");
+      expect(results[0]?.snippet).toContain("Headless HTML fragments can still provide local SourceLine evidence");
+      expect(results[0]?.retrieval?.explanation).toContain("title boost");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not promote body titles from headless HTML fragments", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-body-title-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "fragment.html"),
+        `<p>Body introduction appears before the misleading title.</p>
+        <title>Body Misleading Title</title>
+        <h1>Visible Fragment Heading</h1>
+        <p>Visible fragment evidence marker stays searchable.</p>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({
+        rootDir,
+        now: () => new Date("2026-06-07T08:00:00.000Z")
+      });
+
+      const results = await provider.search({
+        claimId: "claim-1",
+        query: "visible fragment evidence marker",
+        maxResults: 1
+      });
+
+      expect(results[0]?.title).toContain("Visible Fragment Heading");
+      expect(results[0]?.title).not.toContain("Body Misleading Title");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores hidden and decorative HTML content in local source folders", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-template-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
