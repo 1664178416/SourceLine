@@ -259,7 +259,9 @@ describe("createLocalSearchProvider", () => {
     try {
       await writeFile(
         join(rootDir, "fragment.html"),
-        `<meta charset="utf-8">
+        `<!-- <body>Comment-only body noise</body> -->
+        <script>const ignored = "<body>Script-only body noise</body>";</script>
+        <meta charset="utf-8">
         <title>Fragment Evidence Portal</title>
         <p>Headless HTML fragments can still provide local SourceLine evidence.</p>`,
         "utf8"
@@ -391,6 +393,48 @@ describe("createLocalSearchProvider", () => {
       expect(cache.entries?.[0]?.document?.text).toBe(
         "Visible Published Title\n\nVisible published evidence marker should be indexed."
       );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores fake body tags in comments and scripts when extracting HTML body text", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-fake-body-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "fake-body.html"),
+        `<!-- <body><p>commentbodyonly hidden text</p></body> -->
+        <script>const ignored = "<body><p>scriptbodyonly hidden text</p></body>";</script>
+        <html>
+          <body>
+            <h1>Actual Body Title</h1>
+            <p>Actual body evidence marker remains searchable.</p>
+          </body>
+        </html>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({
+        rootDir,
+        now: () => new Date("2026-06-07T08:00:00.000Z")
+      });
+
+      const visibleResults = await provider.search({
+        claimId: "visible",
+        query: "actual body evidence marker",
+        maxResults: 1
+      });
+      const hiddenResults = await provider.search({
+        claimId: "hidden",
+        query: "commentbodyonly scriptbodyonly",
+        maxResults: 1
+      });
+
+      expect(visibleResults[0]?.title).toContain("Actual Body Title");
+      expect(visibleResults[0]?.snippet).toContain("Actual body evidence marker remains searchable");
+      expect(hiddenResults).toEqual([]);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

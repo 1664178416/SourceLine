@@ -1470,11 +1470,12 @@ function extractHtmlTitle(html: string): string | undefined {
 }
 
 function extractHeadlessHtmlTitle(html: string): string | undefined {
-  if (/<head\b/i.test(html) || /<body\b/i.test(html)) {
+  const titleSource = sanitizeHeadlessHtmlTitleSource(html);
+  if (/<head\b/i.test(titleSource) || /<body\b/i.test(titleSource)) {
     return undefined;
   }
 
-  const metadataPrefix = sanitizeHeadlessHtmlTitleSource(html)
+  const metadataPrefix = titleSource
     .replace(/<!doctype\b[^>]*>/gi, " ")
     .replace(/^\s*<html\b[^>]*>/i, "")
     .match(/^\s*(?:<(?:meta|link|base)\b[^>]*>\s*)*<title\b[^>]*>([\s\S]*?)<\/title>/i);
@@ -1482,12 +1483,7 @@ function extractHeadlessHtmlTitle(html: string): string | undefined {
 }
 
 function sanitizeHeadlessHtmlTitleSource(html: string): string {
-  return removeHtmlComments(html)
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
+  return removeHtmlNonContentElements(removeHtmlComments(html));
 }
 
 function firstMeaningfulLine(text: string): string | undefined {
@@ -1523,13 +1519,9 @@ function htmlToText(html: string): string {
 }
 
 function visibleHtmlBody(html: string): string {
-  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
-  return removeHiddenHtmlElements(removeHtmlComments(body))
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
+  const visibleHtml = removeHtmlNonContentElements(removeHtmlComments(html));
+  const body = visibleHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
+  return removeHiddenHtmlElements(body);
 }
 
 function removeHiddenHtmlElements(html: string): string {
@@ -1547,6 +1539,15 @@ function visibleHtmlHead(html: string): string {
 
 function removeHtmlComments(html: string): string {
   return html.replace(/<!--[\s\S]*?-->/g, " ");
+}
+
+function removeHtmlNonContentElements(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
 }
 
 function decodeHtmlCodePoint(value: string, radix: number, fallback: string): string {
