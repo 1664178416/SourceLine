@@ -326,6 +326,8 @@ describe("createLocalSearchProvider", () => {
       await writeFile(
         join(rootDir, "template.html"),
         `<!doctype html>
+        <!-- <head><title>Comment Head Title</title></head> -->
+        <script>const fakeHead = "<head><title>Script Head Title</title></head>";</script>
         <html>
           <head>
             <!-- <title>Comment Fake Title</title> -->
@@ -380,6 +382,8 @@ describe("createLocalSearchProvider", () => {
 
       expect(hiddenResults).toEqual(hiddenTokens.map(() => []));
       expect(visibleResults[0]?.title).toContain("Head Published Title");
+      expect(visibleResults[0]?.title).not.toContain("Comment Head Title");
+      expect(visibleResults[0]?.title).not.toContain("Script Head Title");
       expect(visibleResults[0]?.title).not.toContain("Comment Fake Title");
       expect(visibleResults[0]?.title).not.toContain("Comment Hidden Title");
       expect(visibleResults[0]?.title).not.toContain("Script Fake Title");

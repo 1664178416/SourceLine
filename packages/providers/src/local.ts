@@ -1529,12 +1529,8 @@ function removeHiddenHtmlElements(html: string): string {
 }
 
 function visibleHtmlHead(html: string): string {
-  const head = html.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
-  return removeHtmlComments(head)
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
+  const visibleHtml = removeHtmlNonContentElements(removeHtmlComments(html));
+  return visibleHtml.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
 }
 
 function removeHtmlComments(html: string): string {
