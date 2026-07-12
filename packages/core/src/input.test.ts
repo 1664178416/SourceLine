@@ -78,6 +78,38 @@ describe("loadInput", () => {
     }
   });
 
+  it("ignores fake body tags in comments and scripts for local HTML files", async () => {
+    const rootDir = join(tmpdir(), `sourceline-html-fake-body-input-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      const htmlPath = join(rootDir, "fake-body.html");
+      await writeFile(
+        htmlPath,
+        `<!-- <body><p>commentbodyonly hidden text</p></body> -->
+        <script>const ignored = "<body><p>scriptbodyonly hidden text</p></body>";</script>
+        <html>
+          <body>
+            <h1>Actual Input Title</h1>
+            <p>Actual input evidence remains readable.</p>
+          </body>
+        </html>`,
+        "utf8"
+      );
+
+      const input = await loadInput({
+        kind: "file",
+        path: htmlPath
+      });
+
+      expect(input.text).toContain("Actual Input Title\n\nActual input evidence remains readable.");
+      expect(input.text).not.toContain("commentbodyonly");
+      expect(input.text).not.toContain("scriptbodyonly");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects local file inputs with no readable text", async () => {
     const rootDir = join(tmpdir(), `sourceline-empty-file-input-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
@@ -265,6 +297,35 @@ describe("loadInput", () => {
     expect(input.text).toContain("First source claim\n\nSecond source claim");
     expect(input.text).not.toContain("claimSecond");
   });
+
+  it("ignores fake body tags in comments and scripts for HTML URLs", async () => {
+    const input = await loadInput({
+      kind: "url",
+      url: "https://example.com/fake-body",
+      fetchImpl: async () =>
+        new Response(
+          `<!-- <body><p>commentbodyonly hidden text</p></body> -->
+          <script>const ignored = "<body><p>scriptbodyonly hidden text</p></body>";</script>
+          <html>
+            <body>
+              <h1>Actual URL Title</h1>
+              <p>Actual URL evidence remains readable.</p>
+            </body>
+          </html>`,
+          {
+            status: 200,
+            headers: {
+              "content-type": "text/html"
+            }
+          }
+        )
+    });
+
+    expect(input.text).toContain("Actual URL Title\n\nActual URL evidence remains readable.");
+    expect(input.text).not.toContain("commentbodyonly");
+    expect(input.text).not.toContain("scriptbodyonly");
+  });
+
   it("loads plain-text URLs without HTML cleanup", async () => {
     let requestedHeaders: HeadersInit | undefined;
     const input = await loadInput({

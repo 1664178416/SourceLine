@@ -372,13 +372,9 @@ function assertReadableText(text: string, message: string): void {
 }
 
 function htmlToText(html: string): string {
-  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+  const body = visibleHtmlBody(html);
 
   return body
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)\b[^>]*>/gi, "\n\n")
     .replace(/<\/(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)>/gi, "\n\n")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -391,6 +387,22 @@ function htmlToText(html: string): string {
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&#(\d+);/g, (match, codePoint: string) => decodeHtmlCodePoint(codePoint, 10, match))
     .replace(/&#x([0-9a-f]+);/gi, (match, codePoint: string) => decodeHtmlCodePoint(codePoint, 16, match));
+}
+
+function visibleHtmlBody(html: string): string {
+  const visibleHtml = removeHtmlNonContentElements(removeHtmlComments(html));
+  return visibleHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
+}
+
+function removeHtmlComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, " ");
+}
+
+function removeHtmlNonContentElements(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
 }
 
 function decodeHtmlCodePoint(value: string, radix: number, fallback: string): string {
