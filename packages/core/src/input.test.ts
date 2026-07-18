@@ -26,6 +26,12 @@ describe("loadInput", () => {
           <body>
             <h1>SourceLine &amp; HTML</h1>
             <script>window.noise = true;</script>
+            <template><p>templatedraftonly hidden input text.</p></template>
+            <svg><title>Decorative Input Icon</title><text>svgicononly hidden input text.</text></svg>
+            <div hidden><p>hiddenattronly hidden input text.</p></div>
+            <section aria-hidden="true"><p>ariahiddenonly hidden input text.</p></section>
+            <aside style="display:none"><p>displaynoneonly hidden input text.</p></aside>
+            <div style="color:red; visibility: hidden"><p>visibilityhiddenonly hidden input text.</p></div>
             <p>Local HTML input becomes readable text.</p>
           </body>
         </html>`,
@@ -44,6 +50,12 @@ describe("loadInput", () => {
       expect(input.text).toContain("SourceLine & HTML\n\nLocal HTML input becomes readable text.");
       expect(input.text).not.toContain("window.noise");
       expect(input.text).not.toContain("display: none");
+      expect(input.text).not.toContain("templatedraftonly");
+      expect(input.text).not.toContain("svgicononly");
+      expect(input.text).not.toContain("hiddenattronly");
+      expect(input.text).not.toContain("ariahiddenonly");
+      expect(input.text).not.toContain("displaynoneonly");
+      expect(input.text).not.toContain("visibilityhiddenonly");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -259,6 +271,12 @@ describe("loadInput", () => {
             </head>
             <body>
               <h1>SourceLine &amp; Evidence</h1>
+              <template><p>templatedraftonly hidden URL text.</p></template>
+              <svg><title>Decorative URL Icon</title><text>svgicononly hidden URL text.</text></svg>
+              <div hidden><p>hiddenattronly hidden URL text.</p></div>
+              <section aria-hidden="true"><p>ariahiddenonly hidden URL text.</p></section>
+              <aside style="display:none"><p>displaynoneonly hidden URL text.</p></aside>
+              <div style="color:red; visibility: hidden"><p>visibilityhiddenonly hidden URL text.</p></div>
               <p>Markdown reports make verification easier.</p>
             </body>
           </html>`,
@@ -278,6 +296,12 @@ describe("loadInput", () => {
     expect(input.text).toContain("SourceLine & Evidence\n\nMarkdown reports make verification easier.");
     expect(input.text).not.toContain("Ignored title");
     expect(input.text).not.toContain("window.noise");
+    expect(input.text).not.toContain("templatedraftonly");
+    expect(input.text).not.toContain("svgicononly");
+    expect(input.text).not.toContain("hiddenattronly");
+    expect(input.text).not.toContain("ariahiddenonly");
+    expect(input.text).not.toContain("displaynoneonly");
+    expect(input.text).not.toContain("visibilityhiddenonly");
     expect(input.hash).toMatch(/^[a-f0-9]{64}$/);
   });
 

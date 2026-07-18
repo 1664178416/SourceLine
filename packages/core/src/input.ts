@@ -13,6 +13,14 @@ const URL_FETCH_TIMEOUT_MS = 15_000;
 const MAX_FETCH_ERROR_CHARS = 1_000;
 const TRUNCATION_MARKER = "... [truncated]";
 const SOURCE_LINE_USER_AGENT = `SourceLine/${readCoreVersion()}`;
+const HIDDEN_HTML_ELEMENT_PATTERN = new RegExp(
+  String.raw`<([a-z][\w:-]*)\b(?=[^>]*(?:${[
+    String.raw`\saria-hidden\s*=\s*(?:"true"|'true'|true)(?=\s|>|\/)`,
+    String.raw`\shidden(?:\s|=|>|\/)`,
+    String.raw`\sstyle\s*=\s*(?:"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"]*"|'[^']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^']*')`
+  ].join("|")}))[^>]*>[\s\S]*?<\/\1>`,
+  "gi"
+);
 
 class ResponseBodyTimeoutError extends Error {}
 
@@ -391,18 +399,25 @@ function htmlToText(html: string): string {
 
 function visibleHtmlBody(html: string): string {
   const visibleHtml = removeHtmlNonContentElements(removeHtmlComments(html));
-  return visibleHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
+  const body = visibleHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
+  return removeHiddenHtmlElements(body);
 }
 
 function removeHtmlComments(html: string): string {
   return html.replace(/<!--[\s\S]*?-->/g, " ");
 }
 
+function removeHiddenHtmlElements(html: string): string {
+  return html.replace(HIDDEN_HTML_ELEMENT_PATTERN, " ");
+}
+
 function removeHtmlNonContentElements(html: string): string {
   return html
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, " ");
 }
 
 function decodeHtmlCodePoint(value: string, radix: number, fallback: string): string {
