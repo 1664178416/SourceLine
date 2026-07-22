@@ -194,7 +194,7 @@ async function loadUrlInput(input: Extract<InputDescriptor, { kind: "url" }>): P
 
   const contentType = response.headers.get("content-type") ?? "";
   const body = await readBoundedResponse(response, url);
-  const text = contentType.includes("html") ? htmlToText(body) : body;
+  const text = isHtmlContentType(contentType) ? htmlToText(body) : body;
   const normalized = normalizeWhitespace(text);
 
   if (normalized.length === 0) {
@@ -209,6 +209,10 @@ async function loadUrlInput(input: Extract<InputDescriptor, { kind: "url" }>): P
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
+function isHtmlContentType(contentType: string): boolean {
+  return contentType.toLowerCase().includes("html");
 }
 
 function formatFetchError(error: unknown): string {

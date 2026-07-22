@@ -305,6 +305,23 @@ describe("loadInput", () => {
     expect(input.hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("detects HTML URL content types case-insensitively", async () => {
+    const input = await loadInput({
+      kind: "url",
+      url: "https://example.com/case-html",
+      fetchImpl: async () =>
+        new Response("<html><body><h1>Mixed Case HTML</h1><script>window.noise = true;</script></body></html>", {
+          status: 200,
+          headers: {
+            "content-type": "Text/HTML; Charset=UTF-8"
+          }
+        })
+    });
+
+    expect(input.text).toBe("Mixed Case HTML");
+    expect(input.text).not.toContain("window.noise");
+  });
+
   it("keeps adjacent HTML list items separated in URL input", async () => {
     const input = await loadInput({
       kind: "url",
