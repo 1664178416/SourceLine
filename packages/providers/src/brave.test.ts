@@ -243,6 +243,16 @@ describe("createBraveSearchProvider", () => {
                   description: "Control character URL."
                 },
                 {
+                  title: "Spaced URL",
+                  url: "https://example.com/safe path",
+                  description: "Whitespace URL."
+                },
+                {
+                  title: "Angle URL",
+                  url: "https://example.com/<unsafe>",
+                  description: "Angle bracket URL."
+                },
+                {
                   title: "Empty evidence",
                   url: "https://example.com/empty",
                   description: "   ",

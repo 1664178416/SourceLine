@@ -248,6 +248,18 @@ describe("createTavilySearchProvider", () => {
                 score: 0.7
               },
               {
+                title: "Spaced URL",
+                url: "https://example.com/safe path",
+                content: "Whitespace URL.",
+                score: 0.65
+              },
+              {
+                title: "Angle URL",
+                url: "https://example.com/<unsafe>",
+                content: "Angle bracket URL.",
+                score: 0.62
+              },
+              {
                 title: "Empty evidence",
                 url: "https://example.com/empty",
                 content: "   ",

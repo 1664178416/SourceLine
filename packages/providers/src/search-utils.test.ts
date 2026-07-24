@@ -6,6 +6,8 @@ describe("search-utils", () => {
     expect(normalizeHttpUrl(" https://example.com/source ")).toBe("https://example.com/source");
     expect(normalizeHttpUrl("https://user:secret@example.com/private")).toBeUndefined();
     expect(normalizeHttpUrl("javascript:alert(1)")).toBeUndefined();
+    expect(normalizeHttpUrl("https://example.com/safe path")).toBeUndefined();
+    expect(normalizeHttpUrl("https://example.com/<unsafe>")).toBeUndefined();
     expect(normalizeHttpUrl(`https://example.com/${"a".repeat(2_000)}`)).toBeUndefined();
   });
 

@@ -7,7 +7,7 @@ const TRUNCATION_MARKER = "... [truncated]";
 
 export function normalizeHttpUrl(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
-  if (!trimmed || trimmed.length > MAX_HTTP_URL_CHARS || /[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+  if (!trimmed || trimmed.length > MAX_HTTP_URL_CHARS || /[\u0000-\u001f\u007f-\u009f\s<>]/.test(trimmed)) {
     return undefined;
   }
 
