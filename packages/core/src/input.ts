@@ -26,7 +26,7 @@ export async function loadInput(input: InputDescriptor): Promise<ParsedInput> {
     }
     assertWithinInputByteLimit(fileStat.size, `File ${absolutePath}`);
     const rawText = await readBoundedFileText(absolutePath);
-    const text = isHtmlFile(absolutePath) ? normalizeWhitespace(htmlToText(rawText)) : rawText;
+    const text = isHtmlFile(absolutePath) ? htmlToText(rawText) : rawText;
     assertReadableText(text, `File ${absolutePath} contains no readable text.`);
 
     return {
@@ -187,8 +187,7 @@ async function loadUrlInput(input: Extract<InputDescriptor, { kind: "url" }>): P
 
   const contentType = response.headers.get("content-type") ?? "";
   const body = await readBoundedResponse(response, url);
-  const text = isHtmlContentType(contentType) ? htmlToText(body) : body;
-  const normalized = normalizeWhitespace(text);
+  const normalized = isHtmlContentType(contentType) ? htmlToText(body) : normalizeWhitespace(body);
 
   if (normalized.length === 0) {
     throw new Error(`Fetched ${url}, but no readable text was found.`);
