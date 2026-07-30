@@ -322,6 +322,39 @@ describe("loadInput", () => {
     expect(input.text).not.toContain("window.noise");
   });
 
+  it("detects XHTML URL content types as HTML", async () => {
+    const input = await loadInput({
+      kind: "url",
+      url: "https://example.com/xhtml",
+      fetchImpl: async () =>
+        new Response("<html><body><h1>XHTML Evidence</h1><script>window.noise = true;</script></body></html>", {
+          status: 200,
+          headers: {
+            "content-type": "application/xhtml+xml; charset=utf-8"
+          }
+        })
+    });
+
+    expect(input.text).toBe("XHTML Evidence");
+    expect(input.text).not.toContain("window.noise");
+  });
+
+  it("does not treat arbitrary content types containing html as HTML", async () => {
+    const input = await loadInput({
+      kind: "url",
+      url: "https://example.com/not-html",
+      fetchImpl: async () =>
+        new Response("<h1>Not HTML</h1><script>window.noise = true;</script>", {
+          status: 200,
+          headers: {
+            "content-type": "application/nothtml; charset=utf-8"
+          }
+        })
+    });
+
+    expect(input.text).toBe("<h1>Not HTML</h1><script>window.noise = true;</script>");
+  });
+
   it("keeps adjacent HTML list items separated in URL input", async () => {
     const input = await loadInput({
       kind: "url",

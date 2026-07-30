@@ -204,7 +204,13 @@ function isAbortError(error: unknown): boolean {
 }
 
 function isHtmlContentType(contentType: string): boolean {
-  return contentType.toLowerCase().includes("html");
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  if (!mediaType) {
+    return false;
+  }
+
+  const subtype = mediaType.split("/", 2)[1];
+  return subtype === "html" || subtype === "xhtml+xml" || subtype?.endsWith("+html") === true;
 }
 
 function formatFetchError(error: unknown): string {
