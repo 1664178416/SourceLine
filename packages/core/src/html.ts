@@ -6,6 +6,15 @@ const HIDDEN_HTML_ELEMENT_PATTERN = new RegExp(
   ].join("|")}))[^>]*>[\s\S]*?<\/\1>`,
   "gi"
 );
+const HTML_ENTITY_PATTERN = /&(?:#(\d+)|#x([0-9a-f]+)|(nbsp|amp|lt|gt|quot|apos));/gi;
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'"
+};
 
 export function htmlToText(html: string): string {
   return extractVisibleHtmlBody(html)
@@ -14,15 +23,8 @@ export function htmlToText(html: string): string {
     .replace(/<\/(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)>/gi, "\n\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (match, codePoint: string) => decodeHtmlCodePoint(codePoint, 10, match))
-    .replace(/&#x([0-9a-f]+);/gi, (match, codePoint: string) => decodeHtmlCodePoint(codePoint, 16, match))
-    .replace(/\r\n/g, "\n")
+    .replace(HTML_ENTITY_PATTERN, decodeHtmlEntity)
+    .replace(/\r\n?/g, "\n")
     .replace(/[ \t\f\v]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .split("\n")
@@ -30,6 +32,21 @@ export function htmlToText(html: string): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function decodeHtmlEntity(
+  match: string,
+  decimalCodePoint: string | undefined,
+  hexadecimalCodePoint: string | undefined,
+  namedEntity: string | undefined
+): string {
+  if (namedEntity !== undefined) {
+    return HTML_NAMED_ENTITIES[namedEntity.toLowerCase()] ?? match;
+  }
+
+  return hexadecimalCodePoint === undefined
+    ? decodeHtmlCodePoint(decimalCodePoint ?? "", 10, match)
+    : decodeHtmlCodePoint(hexadecimalCodePoint, 16, match);
 }
 
 function extractVisibleHtmlBody(html: string): string {
@@ -61,13 +78,16 @@ function removeHtmlNonContentElements(html: string): string {
 
 function decodeHtmlCodePoint(value: string, radix: number, fallback: string): string {
   const codePoint = Number.parseInt(value, radix);
-  if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+  if (
+    !Number.isSafeInteger(codePoint) ||
+    codePoint <= 0 ||
+    codePoint > 0x10ffff ||
+    (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+    (codePoint < 0x20 && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d) ||
+    (codePoint >= 0x7f && codePoint <= 0x9f)
+  ) {
     return fallback;
   }
 
-  try {
-    return String.fromCodePoint(codePoint);
-  } catch {
-    return fallback;
-  }
+  return String.fromCodePoint(codePoint);
 }

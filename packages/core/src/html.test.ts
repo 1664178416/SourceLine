@@ -29,4 +29,16 @@ describe("htmlToText", () => {
     expect(text).not.toContain("displaynoneonly");
     expect(text).not.toContain("visibilityhiddenonly");
   });
+
+  it("decodes each HTML entity exactly once", () => {
+    expect(htmlToText("<p>&amp;lt;tag&amp;gt; &amp;#65; &amp;amp; &lt;ok&gt; &#65; &#x42;</p>")).toBe(
+      "&lt;tag&gt; &#65; &amp; <ok> A B"
+    );
+  });
+
+  it("keeps unsafe numeric entities printable while normalizing valid whitespace", () => {
+    expect(htmlToText("<p>before&#13;after &#0; &#27; &#xD800; &#x1F600;</p>")).toBe(
+      "before\nafter &#0; &#27; &#xD800; \u{1f600}"
+    );
+  });
 });

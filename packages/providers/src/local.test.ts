@@ -252,6 +252,48 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it("decodes local HTML entities once without introducing unsafe control characters", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-entities-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "entities.html"),
+        `<html>
+          <head><title>Archive &amp;lt;Portal&amp;gt;</title></head>
+          <body>
+            <p>Literal &amp;lt;marker&amp;gt; remains encoded once.</p>
+            <p>Regular &lt;evidence&gt; decodes once.</p>
+            <p>Unsafe &#27; stays printable.</p>
+          </body>
+        </html>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({
+        rootDir,
+        now: () => new Date("2026-06-07T08:00:00.000Z")
+      });
+      const results = await provider.search({
+        claimId: "claim-1",
+        query: "literal marker remains encoded",
+        maxResults: 1
+      });
+      const rawCache = await readFile(join(rootDir, ".sourceline", "cache", "local-index.json"), "utf8");
+      const cache = JSON.parse(rawCache) as {
+        entries?: Array<{ document?: { title?: string; text?: string } }>;
+      };
+
+      expect(results[0]?.title).toContain("Archive &lt;Portal&gt;");
+      expect(cache.entries?.[0]?.document?.title).toBe("Archive &lt;Portal&gt;");
+      expect(cache.entries?.[0]?.document?.text).toBe(
+        "Literal &lt;marker&gt; remains encoded once.\n\nRegular <evidence> decodes once.\n\nUnsafe &#27; stays printable."
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses metadata titles from headless HTML fragments", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-fragment-title-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
