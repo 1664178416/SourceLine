@@ -41,4 +41,18 @@ describe("htmlToText", () => {
       "before\nafter &#0; &#27; &#xD800; \u{1f600}"
     );
   });
+
+  it("removes complete hidden subtrees with nested matching tags", () => {
+    const text = htmlToText(`<body>
+      <div hidden>
+        <div>nestedhiddenonly text.</div>
+        <p>hiddentailonly text after the nested tag.</p>
+      </div>
+      <p title="hidden evidence remains visible">Visible evidence remains readable.</p>
+    </body>`);
+
+    expect(text).toBe("Visible evidence remains readable.");
+    expect(text).not.toContain("nestedhiddenonly");
+    expect(text).not.toContain("hiddentailonly");
+  });
 });

@@ -384,8 +384,10 @@ describe("createLocalSearchProvider", () => {
             <section aria-hidden="true"><h1>Aria Hidden Title</h1><p>ariahiddenonly text should not be indexed.</p></section>
             <aside style="display:none"><h1>Display None Title</h1><p>displaynoneonly text should not be indexed.</p></aside>
             <div style="color:red; visibility: hidden"><h1>Visibility Hidden Title</h1><p>visibilityhiddenonly text should not be indexed.</p></div>
+            <div hidden><div>nestedhiddenonly text should not be indexed.</div><p>hiddentailonly text should not be indexed.</p></div>
             <h1>Visible Published Title</h1>
             <p>Visible published evidence marker should be indexed.</p>
+            <p title="hidden evidence remains visible">Visible hidden-label evidence stays searchable.</p>
           </body>
         </html>`,
         "utf8"
@@ -403,6 +405,8 @@ describe("createLocalSearchProvider", () => {
         "ariahiddenonly",
         "displaynoneonly",
         "visibilityhiddenonly",
+        "nestedhiddenonly",
+        "hiddentailonly",
         "commentonly"
       ];
       const hiddenResults = await Promise.all(
@@ -437,7 +441,7 @@ describe("createLocalSearchProvider", () => {
       expect(visibleResults[0]?.title).not.toContain("Visibility Hidden Title");
       expect(visibleResults[0]?.snippet).toContain("Visible published evidence marker");
       expect(cache.entries?.[0]?.document?.text).toBe(
-        "Visible Published Title\n\nVisible published evidence marker should be indexed."
+        "Visible Published Title\n\nVisible published evidence marker should be indexed.\n\nVisible hidden-label evidence stays searchable."
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
