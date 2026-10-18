@@ -30,9 +30,12 @@ const HTML_NAMED_ENTITIES: Record<string, string> = {
 export function htmlToText(html: string): string {
   return extractVisibleHtmlBody(html)
     .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)\b[^>]*>/gi, "\n\n")
-    .replace(/<\/(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)>/gi, "\n\n")
-    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(HTML_TAG_PATTERN, (_tag: string, name: string) => {
+      if (/^(p|div|section|article|header|footer|main|aside|nav|li|h[1-6]|blockquote|tr)$/i.test(name)) {
+        return "\n\n";
+      }
+      return name.toLowerCase() === "br" ? "\n" : " ";
+    })
     .replace(/<[^>]+>/g, " ")
     .replace(HTML_ENTITY_PATTERN, decodeHtmlEntity)
     .replace(/\r\n?/g, "\n")

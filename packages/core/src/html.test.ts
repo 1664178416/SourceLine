@@ -36,6 +36,15 @@ describe("htmlToText", () => {
     );
   });
 
+  it.each([
+    ['<p title="score > threshold">Visible evidence.</p>', "Visible evidence."],
+    ["<span title='score > threshold'>Visible evidence.</span>", "Visible evidence."],
+    ['<p>First.</p><p title="score > threshold">Second.</p>', "First.\n\nSecond."],
+    ['<p>First.<br title="score > threshold">Second.</p>', "First.\nSecond."]
+  ])("keeps quoted greater-than signs inside tags out of extracted text: %s", (html, expected) => {
+    expect(htmlToText(html)).toBe(expected);
+  });
+
   it("keeps unsafe numeric entities printable while normalizing valid whitespace", () => {
     expect(htmlToText("<p>before&#13;after &#0; &#27; &#xD800; &#x1F600;</p>")).toBe(
       "before\nafter &#0; &#27; &#xD800; \u{1f600}"
