@@ -1,7 +1,7 @@
 import type { DocumentSegment } from "./types.js";
 
 export function segmentDocument(text: string): DocumentSegment[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const segments: DocumentSegment[] = [];
   let current: string[] = [];
   let startLine = 1;

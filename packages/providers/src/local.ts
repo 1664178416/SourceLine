@@ -1218,7 +1218,7 @@ function hasControlCharacters(value: string): boolean {
 }
 
 function chunkText(text: string): LocalChunk[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const chunks: LocalChunk[] = [];
   let current: string[] = [];
   let startLine = 1;

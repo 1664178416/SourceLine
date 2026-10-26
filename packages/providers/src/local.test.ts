@@ -74,6 +74,27 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it("normalizes classic Mac line endings before indexing local sources", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-cr-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(join(rootDir, "notes.txt"), "first line\rsecond line", "utf8");
+
+      const provider = createLocalSearchProvider({ rootDir });
+      const results = await provider.search({
+        claimId: "claim-1",
+        query: "second line",
+        maxResults: 1
+      });
+
+      expect(results[0]?.title).toContain("lines 1-2");
+      expect(results[0]?.text).toBe("first line\nsecond line");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("finds CJK evidence without whitespace-delimited words", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-cjk-1781067948639`);
     await mkdir(rootDir, { recursive: true });
