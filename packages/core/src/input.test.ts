@@ -407,7 +407,7 @@ describe("loadInput", () => {
       url: "https://example.com/plain.txt",
       fetchImpl: async (_url, init) => {
         requestedHeaders = init?.headers;
-        return new Response("SourceLine checks plain text URLs.", {
+        return new Response("First line\rSecond line.", {
           status: 200,
           headers: {
             "content-type": "text/plain"
@@ -416,7 +416,7 @@ describe("loadInput", () => {
       }
     });
 
-    expect(input.text).toBe("SourceLine checks plain text URLs.");
+    expect(input.text).toBe("First line\nSecond line.");
     expect(new Headers(requestedHeaders).get("user-agent")).toBe(`SourceLine/${coreVersion}`);
   });
 

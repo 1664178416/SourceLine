@@ -79,7 +79,7 @@ describe("createLocalSearchProvider", () => {
     await mkdir(rootDir, { recursive: true });
 
     try {
-      await writeFile(join(rootDir, "notes.txt"), "first line\rsecond line", "utf8");
+      await writeFile(join(rootDir, "notes.txt"), "intro\r# Evidence Title\rsecond line", "utf8");
 
       const provider = createLocalSearchProvider({ rootDir });
       const results = await provider.search({
@@ -88,8 +88,9 @@ describe("createLocalSearchProvider", () => {
         maxResults: 1
       });
 
-      expect(results[0]?.title).toContain("lines 1-2");
-      expect(results[0]?.text).toBe("first line\nsecond line");
+      expect(results[0]?.title).toContain("Evidence Title");
+      expect(results[0]?.title).toContain("lines 1-3");
+      expect(results[0]?.text).toBe("intro\n# Evidence Title\nsecond line");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

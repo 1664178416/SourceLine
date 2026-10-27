@@ -1468,7 +1468,7 @@ function normalizeForPhrase(text: string): string {
 
 function extractTitle(text: string): string | undefined {
   const titleLine = text
-    .split(/\r?\n/)
+    .split(/\r\n?/)
     .map((line) => line.trim())
     .find((line) => line.startsWith("#"));
 
@@ -1508,7 +1508,7 @@ function sanitizeHeadlessHtmlTitleSource(html: string): string {
 
 function firstMeaningfulLine(text: string): string | undefined {
   return text
-    .split(/\r?\n/)
+    .split(/\r\n?/)
     .map((line) => line.trim())
     .find((line) => line.length > 0);
 }
