@@ -1130,7 +1130,7 @@ async function loadIgnoreRules(rootDir: string): Promise<IgnoreRule[]> {
       throw new Error(`Local ignore file is larger than ${MAX_IGNORE_FILE_BYTES} bytes: ${candidate}`);
     }
     const raw = await readFile(candidate, "utf8");
-    for (const [lineIndex, line] of raw.split(/\r?\n/).entries()) {
+    for (const [lineIndex, line] of raw.split(/\r\n?|\n/).entries()) {
       const trimmed = line.trim();
       if (trimmed.length === 0 || trimmed.startsWith("#")) {
         continue;
@@ -1468,7 +1468,7 @@ function normalizeForPhrase(text: string): string {
 
 function extractTitle(text: string): string | undefined {
   const titleLine = text
-    .split(/\r\n?/)
+    .split(/\r\n?|\n/)
     .map((line) => line.trim())
     .find((line) => line.startsWith("#"));
 
@@ -1508,7 +1508,7 @@ function sanitizeHeadlessHtmlTitleSource(html: string): string {
 
 function firstMeaningfulLine(text: string): string | undefined {
   return text
-    .split(/\r\n?/)
+    .split(/\r\n?|\n/)
     .map((line) => line.trim())
     .find((line) => line.length > 0);
 }
