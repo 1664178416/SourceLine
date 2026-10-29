@@ -1199,14 +1199,36 @@ function ignorePatternToRegex(pattern: string): RegExp {
   const normalized = normalizeIgnorePattern(pattern);
   const directoryPattern = normalized.endsWith("/");
   const body = directoryPattern ? normalized.slice(0, -1) : normalized;
-  const escaped = body
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join("[^/]*");
+  const escaped = globPatternToRegex(body);
   const prefix = body.includes("/") ? "^" : "(^|.*/)";
   const suffix = directoryPattern ? "(/.*)?$" : "$";
 
   return new RegExp(`${prefix}${escaped}${suffix}`);
+}
+
+function globPatternToRegex(pattern: string): string {
+  let result = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character !== "*") {
+      result += character?.replace(/[.+?^${}()|[\]\\]/g, "\\$&") ?? "";
+      continue;
+    }
+
+    if (pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        result += "(?:.*/)?";
+        index += 2;
+      } else {
+        result += ".*";
+        index += 1;
+      }
+    } else {
+      result += "[^/]*";
+    }
+  }
+
+  return result;
 }
 
 function normalizeIgnorePattern(pattern: string): string {

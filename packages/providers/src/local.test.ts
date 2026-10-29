@@ -2312,6 +2312,30 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it("supports recursive gitignore wildcards in .sourcelineignore", async () => {
+    const rootDir = join(tmpdir(), `sourceline-ignore-globstar-${Date.now()}`);
+    await mkdir(join(rootDir, "private", "nested"), { recursive: true });
+
+    try {
+      await writeFile(join(rootDir, ".sourcelineignore"), "private/**\n", "utf8");
+      await writeFile(join(rootDir, "public.md"), "Public SourceLine evidence should appear.", "utf8");
+      await writeFile(join(rootDir, "private", "direct.md"), "Direct private evidence should not appear.", "utf8");
+      await writeFile(join(rootDir, "private", "nested", "deep.md"), "Deep private evidence should not appear.", "utf8");
+
+      const provider = createLocalSearchProvider({ rootDir });
+      const results = await provider.search({
+        claimId: "claim-1",
+        query: "SourceLine evidence appear",
+        maxResults: 10
+      });
+      const paths = results.map((result) => result.path.replace(/\\/g, "/"));
+
+      expect(paths).toEqual([expect.stringMatching(/public\.md$/)]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects local ignore paths that are not files", async () => {
     const rootDir = join(tmpdir(), `sourceline-ignore-dir-${Date.now()}`);
     await mkdir(join(rootDir, ".sourcelineignore"), { recursive: true });
