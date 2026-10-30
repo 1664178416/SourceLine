@@ -235,6 +235,39 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it.each([
+    ['<p title="score > attributeonly">Visible evidence.</p>', "Visible evidence."],
+    ["<span title='score > attributeonly'>Visible evidence.</span>", "Visible evidence."],
+    ['<p>First.</p><p title="score > attributeonly">Visible evidence.</p>', "First.\n\nVisible evidence."],
+    ['<p>First.<br title="score > attributeonly">Visible evidence.</p>', "First.\nVisible evidence."]
+  ])("does not index quoted attribute content as HTML evidence: %s", async (html, expected) => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-quoted-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "reference.html"),
+        `<html><head><title>Reference</title></head><body>${html}</body></html>`,
+        "utf8"
+      );
+      const provider = createLocalSearchProvider({ rootDir });
+      const results = await provider.search({ claimId: "claim-1", query: "Visible evidence", maxResults: 5 });
+      expect(results[0]?.snippet).toContain("Visible evidence.");
+      const cachePath = join(rootDir, ".sourceline", "cache", "local-index.json");
+      const cache = JSON.parse(await readFile(cachePath, "utf8")) as {
+        entries?: Array<{ document?: { text?: string } }>;
+      };
+      expect(cache.entries?.[0]?.document?.text).toBe(expected);
+
+      const cachedProvider = createLocalSearchProvider({ rootDir });
+      await expect(
+        cachedProvider.search({ claimId: "claim-2", query: "attributeonly", maxResults: 5 })
+      ).resolves.toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps adjacent HTML list items separated in local source folders", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-list-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
