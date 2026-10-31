@@ -2476,6 +2476,32 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it.each(["**/keep.md", "ignored/*/keep.md", "ignored/**/keep.md", "igno*/nested/keep.md", "keep*.md"])(
+    "finds files re-included by wildcard negations inside ignored directories: %s",
+    async (pattern) => {
+      const rootDir = join(tmpdir(), `sourceline-negated-wildcard-${Date.now()}`);
+      await mkdir(join(rootDir, "ignored", "nested"), { recursive: true });
+
+      try {
+        await writeFile(join(rootDir, ".sourcelineignore"), `ignored/\n!${pattern}\n`, "utf8");
+        await writeFile(join(rootDir, "ignored", "nested", "keep.md"), "Included SourceLine evidence.", "utf8");
+        await writeFile(join(rootDir, "ignored", "nested", "drop.md"), "Excluded SourceLine evidence.", "utf8");
+
+        const provider = createLocalSearchProvider({ rootDir });
+        const results = await provider.search({ claimId: "claim-1", query: "SourceLine evidence", maxResults: 10 });
+
+        expect(results.map((result) => result.path.replace(/\\/g, "/"))).toEqual([
+          expect.stringMatching(/ignored\/nested\/keep\.md$/)
+        ]);
+        const info = await getLocalIndexCacheInfo({ rootDir });
+        expect(info.sourceFiles).toBe(1);
+        expect(info.currentEntries).toBe(1);
+      } finally {
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("skips local source files that disappear after directory scanning", async () => {
     vi.resetModules();
     const rootDir = join(tmpdir(), `sourceline-vanishing-source-${Date.now()}`);

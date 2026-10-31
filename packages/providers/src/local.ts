@@ -1191,6 +1191,12 @@ function mayContainNegatedPath(relativePath: string, rules: IgnoreRule[]): boole
     }
 
     const pattern = rule.normalizedPattern;
+    const wildcardIndex = pattern.indexOf("*");
+    if (wildcardIndex >= 0 && pattern.includes("/")) {
+      // A wildcard can match descendants beyond the pattern's literal prefix.
+      const literalPrefix = pattern.slice(0, wildcardIndex);
+      return literalPrefix.startsWith(prefix) || prefix.startsWith(literalPrefix);
+    }
     return !pattern.includes("/") || pattern.startsWith(prefix) || prefix.startsWith(pattern.replace(/\/+$/, "/"));
   });
 }
