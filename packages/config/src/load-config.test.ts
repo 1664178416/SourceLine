@@ -94,6 +94,24 @@ describe("loadConfig", () => {
     }
   });
 
+  it.each([undefined, "custom.config.json"])("loads UTF-8 BOM config files: %s", async (configPath) => {
+    const rootDir = join(tmpdir(), `sourceline-bom-config-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      const filename = configPath ?? "sourceline.config.json";
+      const config = { llm: { model: "test\uFEFFmodel" }, reports: { defaultFormat: "json" } };
+      await writeFile(join(rootDir, filename), `\uFEFF${JSON.stringify(config)}`, "utf8");
+
+      await expect(loadConfig({ cwd: rootDir, configPath })).resolves.toEqual({
+        config,
+        path: join(rootDir, filename)
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an empty explicit config path", async () => {
     const rootDir = join(tmpdir(), `sourceline-empty-config-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });

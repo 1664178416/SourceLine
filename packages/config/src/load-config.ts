@@ -49,7 +49,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Loade
       throw new Error(`SourceLine config is larger than ${MAX_CONFIG_BYTES} bytes: ${configPath}`);
     }
     const raw = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
     return {
       config: sourceLineConfigSchema.parse(parsed),
       path: configPath
