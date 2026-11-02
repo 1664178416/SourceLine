@@ -9,6 +9,10 @@ const baseClaim: Omit<Claim, "id" | "text"> = {
 };
 
 describe("normalizeClaimText", () => {
+  it.each(["-5", "-0.5", "-1e-3"])("preserves negative numbers while removing Markdown list markers: %s", (value) => {
+    expect(normalizeClaimText(`- The measured value is ${value}.`)).toBe(`The measured value is ${value}.`);
+  });
+
   it("normalizes markdown punctuation, smart quotes, and wrapping quotes", () => {
     expect(normalizeClaimText('> \u201cSourceLine\u2014checks *claims*.\u201d')).toBe("SourceLine checks claims.");
     expect(normalizeClaimText('  "SourceLine checks claims."  ')).toBe("SourceLine checks claims.");
@@ -17,6 +21,18 @@ describe("normalizeClaimText", () => {
 });
 
 describe("dedupeClaims", () => {
+  it("keeps claims with opposite numeric signs distinct", () => {
+    const claims = dedupeClaims([
+      { ...baseClaim, id: "negative", text: "The temperature is -5 degrees." },
+      { ...baseClaim, id: "positive", text: "The temperature is 5 degrees." }
+    ]);
+
+    expect(claims.map((claim) => claim.text)).toEqual([
+      "The temperature is -5 degrees.",
+      "The temperature is 5 degrees."
+    ]);
+  });
+
   it("deduplicates claims that only differ by casing, quotes, and terminal punctuation", () => {
     const claims = dedupeClaims([
       {
