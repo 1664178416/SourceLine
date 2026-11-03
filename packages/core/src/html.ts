@@ -65,7 +65,7 @@ function decodeHtmlEntity(
 
 function extractVisibleHtmlBody(html: string): string {
   const visibleHtml = sanitizeHtmlStructure(html);
-  const body = visibleHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
+  const body = visibleHtml.match(/<body\b(?:[^"'<>]|"[^"]*"|'[^']*')*>([\s\S]*?)<\/body>/i)?.[1] ?? visibleHtml;
   return removeHiddenHtmlElements(body);
 }
 

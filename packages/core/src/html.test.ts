@@ -36,6 +36,14 @@ describe("htmlToText", () => {
     );
   });
 
+  it.each(['title="score > attributeonly"', "title='score > attributeonly'"])(
+    "keeps quoted body attributes out of extracted text: %s",
+    (attribute) => {
+      expect(htmlToText(`<html><head><title>Reference</title></head><body ${attribute}><p>Visible evidence.</p></body></html>`))
+        .toBe("Visible evidence.");
+    }
+  );
+
   it.each([
     ['<p title="score > threshold">Visible evidence.</p>', "Visible evidence."],
     ["<span title='score > threshold'>Visible evidence.</span>", "Visible evidence."],

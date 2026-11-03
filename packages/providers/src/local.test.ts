@@ -268,6 +268,28 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it.each(['title="score > attributeonly"', "title='score > attributeonly'"])(
+    "does not index quoted body attributes as evidence: %s",
+    async (attribute) => {
+      const rootDir = join(tmpdir(), `sourceline-local-html-body-quoted-${Date.now()}`);
+      await mkdir(rootDir, { recursive: true });
+
+      try {
+        await writeFile(
+          join(rootDir, "reference.html"),
+          `<html><head><title>Reference</title></head><body ${attribute}><p>Visible evidence.</p></body></html>`,
+          "utf8"
+        );
+        const provider = createLocalSearchProvider({ rootDir });
+        const results = await provider.search({ claimId: "claim-1", query: "Visible evidence", maxResults: 5 });
+        expect(results[0]?.text).toBe("Visible evidence.");
+        await expect(provider.search({ claimId: "claim-2", query: "attributeonly", maxResults: 5 })).resolves.toEqual([]);
+      } finally {
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("keeps adjacent HTML list items separated in local source folders", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-list-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
