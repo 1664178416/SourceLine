@@ -6,7 +6,8 @@ export function normalizeClaimText(text: string): string {
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2010-\u2015]/g, "-")
-    .replace(/[`*_>#]|-(?!\d)/g, " ")
+    .replace(/^[ \t]*(?:>[ \t]*)+/gm, "")
+    .replace(/[`*_#]|-(?!\d)/g, " ")
     .replace(/\s+/g, " ")
     .replace(/\s+([.,;:!?])/g, "$1")
     .trim();

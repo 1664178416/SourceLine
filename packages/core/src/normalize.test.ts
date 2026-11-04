@@ -9,6 +9,15 @@ const baseClaim: Omit<Claim, "id" | "text"> = {
 };
 
 describe("normalizeClaimText", () => {
+  it.each(["x > 5", "x >= 5", "10 > x > 5"])("preserves inline comparisons: %s", (expression) => {
+    expect(normalizeClaimText(`> The constraint is ${expression}.`)).toBe(`The constraint is ${expression}.`);
+  });
+
+  it("removes nested Markdown blockquote markers on each line", () => {
+    expect(normalizeClaimText("  > > First constraint: x > 5.\n\t> Second constraint: x < 10."))
+      .toBe("First constraint: x > 5. Second constraint: x < 10.");
+  });
+
   it.each(["-5", "-0.5", "-1e-3"])("preserves negative numbers while removing Markdown list markers: %s", (value) => {
     expect(normalizeClaimText(`- The measured value is ${value}.`)).toBe(`The measured value is ${value}.`);
   });
@@ -21,6 +30,13 @@ describe("normalizeClaimText", () => {
 });
 
 describe("dedupeClaims", () => {
+  it("does not merge a comparison with a claim missing its operator", () => {
+    const texts = ["The measured value is > 5.", "The measured value is 5.", "The measured value is < 5."];
+    const claims = dedupeClaims(texts.map((text, index) => ({ ...baseClaim, id: `claim-${index + 1}`, text })));
+
+    expect(claims.map((claim) => claim.text)).toEqual(texts);
+  });
+
   it("keeps claims with opposite numeric signs distinct", () => {
     const claims = dedupeClaims([
       { ...baseClaim, id: "negative", text: "The temperature is -5 degrees." },
