@@ -23,7 +23,7 @@ const httpUrlStringSchema = z
   .string()
   .trim()
   .max(MAX_CONFIG_STRING_CHARS)
-  .url()
+  .url({ abort: true })
   .refine((value) => !hasControlCharacters(value), "Invalid URL: must not contain control characters")
   .refine((value) => {
     const url = new URL(value);

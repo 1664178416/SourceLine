@@ -357,6 +357,25 @@ describe("loadConfig", () => {
     }
   });
 
+  it.each(["", "notaurl", "http://", "https://[invalid"])(
+    "reports malformed LLM base URLs as config validation errors: %s",
+    async (baseUrl) => {
+      const rootDir = join(tmpdir(), `sourceline-malformed-base-url-${Date.now()}`);
+      await mkdir(rootDir, { recursive: true });
+
+      try {
+        const configPath = join(rootDir, "sourceline.config.json");
+        await writeFile(configPath, JSON.stringify({ llm: { baseUrl } }), "utf8");
+
+        await expect(loadConfig({ cwd: rootDir })).rejects.toThrow(
+          `Invalid SourceLine config in ${configPath}: llm.baseUrl: Invalid URL`
+        );
+      } finally {
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("rejects non-http LLM base URLs in config files", async () => {
     const rootDir = join(tmpdir(), `sourceline-non-http-base-url-config-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
