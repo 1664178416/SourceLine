@@ -31,6 +31,22 @@ describe("createMockLlmProvider", () => {
 });
 
 describe("createMockSearchProvider", () => {
+  it.each([
+    ["\u5317\u4eac\u4eba\u53e3", "\u4e0a\u6d77\u4eba\u53e3"],
+    [`${"shared query ".repeat(10)}first`, `${"shared query ".repeat(10)}second`],
+    ["a+b evidence", "a-b evidence"]
+  ])("keeps distinct query results separate and deterministic: %s / %s", async (firstQuery, secondQuery) => {
+    const provider = createMockSearchProvider({ now: () => new Date("2026-06-07T00:00:00.000Z") });
+    const firstRequest = { claimId: "claim-1", query: firstQuery, maxResults: 2 };
+    const first = await provider.search(firstRequest);
+    const second = await provider.search({ ...firstRequest, query: secondQuery });
+    const results = [...first, ...second];
+
+    expect(new Set(results.map((result) => result.id)).size).toBe(4);
+    expect(new Set(results.map((result) => result.url)).size).toBe(4);
+    await expect(provider.search(firstRequest)).resolves.toEqual(first);
+  });
+
   it("normalizes, caps, and skips direct mock search queries", async () => {
     const provider = createMockSearchProvider({
       now: () => new Date("2026-06-07T00:00:00.000Z")

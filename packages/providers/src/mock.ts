@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   Claim,
   EvidenceItem,
@@ -233,9 +234,12 @@ function explanationForStatus(status: VerificationStatus): string {
 }
 
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
+  const normalized = text.toLowerCase();
+  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+  const slug = normalized
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+    .slice(0, 67);
+
+  return `${slug}-${hash}`;
 }
