@@ -1679,7 +1679,7 @@ function removeHtmlRanges(html: string, ranges: Array<{ start: number; end: numb
 
 function visibleHtmlHead(html: string): string {
   const visibleHtml = removeHtmlNonContentElements(removeHtmlComments(html));
-  return visibleHtml.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
+  return visibleHtml.match(/<head\b(?:[^"'<>]|"[^"]*"|'[^']*')*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
 }
 
 function removeHtmlComments(html: string): string {

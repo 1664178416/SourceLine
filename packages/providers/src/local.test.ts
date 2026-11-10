@@ -437,6 +437,29 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it.each(['data-note="score > attributeonly"', "data-note='score > attributeonly'"])(
+    "extracts titles when quoted head attributes contain greater-than signs: %s",
+    async (attribute) => {
+      const rootDir = join(tmpdir(), `sourceline-local-html-head-quoted-${Date.now()}`);
+      await mkdir(rootDir, { recursive: true });
+
+      try {
+        await writeFile(
+          join(rootDir, "reference.html"),
+          `<html><head ${attribute}><title>Quoted Head Title</title></head><body><p>Quoted head evidence marker.</p></body></html>`,
+          "utf8"
+        );
+
+        const provider = createLocalSearchProvider({ rootDir });
+        const results = await provider.search({ claimId: "claim-1", query: "Quoted head evidence marker", maxResults: 1 });
+
+        expect(results[0]?.title).toContain("Quoted Head Title");
+      } finally {
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("ignores hidden and decorative HTML content in local source folders", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-template-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });
