@@ -460,6 +460,27 @@ describe("createLocalSearchProvider", () => {
     }
   );
 
+  it("extracts titles when title attributes contain greater-than signs", async () => {
+    const rootDir = join(tmpdir(), `sourceline-local-html-title-quoted-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "reference.html"),
+        `<html><head><title data-note="score > attributeonly">Quoted Title</title></head><body><p>Quoted title evidence marker.</p></body></html>`,
+        "utf8"
+      );
+
+      const provider = createLocalSearchProvider({ rootDir });
+      const results = await provider.search({ claimId: "claim-1", query: "Quoted title evidence marker", maxResults: 1 });
+
+      expect(results[0]?.title).toContain("Quoted Title");
+      expect(results[0]?.title).not.toContain("attributeonly");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores hidden and decorative HTML content in local source folders", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-html-template-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });

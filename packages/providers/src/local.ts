@@ -1507,9 +1507,9 @@ function extractHtmlTitle(html: string): string | undefined {
   const visibleHead = visibleHtmlHead(html);
   const visibleBody = visibleHtmlBody(html);
   const rawTitle =
-    visibleHead.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ??
+    visibleHead.match(/<title\b(?:[^"'<>]|"[^"]*"|'[^']*')*>([\s\S]*?)<\/title>/i)?.[1] ??
     extractHeadlessHtmlTitle(html) ??
-    visibleBody.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
+    visibleBody.match(/<h1\b(?:[^"'<>]|"[^"]*"|'[^']*')*>([\s\S]*?)<\/h1>/i)?.[1];
   if (!rawTitle) {
     return undefined;
   }
@@ -1526,7 +1526,7 @@ function extractHeadlessHtmlTitle(html: string): string | undefined {
   const metadataPrefix = titleSource
     .replace(/<!doctype\b[^>]*>/gi, " ")
     .replace(/^\s*<html\b[^>]*>/i, "")
-    .match(/^\s*(?:<(?:meta|link|base)\b[^>]*>\s*)*<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    .match(/^\s*(?:<(?:meta|link|base)\b[^>]*>\s*)*<title\b(?:[^"'<>]|"[^"]*"|'[^']*')*>([\s\S]*?)<\/title>/i);
   return metadataPrefix?.[1];
 }
 
