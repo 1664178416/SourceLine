@@ -281,6 +281,54 @@ describe("renderHtmlReport", () => {
     expect(html).toContain('<a href="examples/sources/Folder (draft)/local note.md">Folder source</a>');
   });
 
+  it("encodes URL delimiters in local evidence paths", () => {
+    const report: SourceLineReport = {
+      schemaVersion: "1.0",
+      input: { kind: "text", name: "sample", hash: "abc123" },
+      generatedAt: "2026-06-07T08:00:00.000Z",
+      summary: {
+        totalClaims: 1,
+        supported: 1,
+        partiallySupported: 0,
+        unsupported: 0,
+        contradicted: 0,
+        notEnoughEvidence: 0
+      },
+      checks: [
+        {
+          claim: {
+            id: "claim-1",
+            text: "Local evidence paths with URL delimiters should remain usable.",
+            claimType: "technical",
+            importance: "medium",
+            searchQueries: ["local path"]
+          },
+          status: "supported",
+          confidence: 0.8,
+          evidence: [
+            {
+              source: {
+                id: "source-1",
+                title: "Delimited source",
+                path: "examples/notes#1?.md",
+                retrievedAt: "2026-06-07T00:00:00.000Z"
+              },
+              relation: "supports",
+              confidence: 0.8,
+              explanation: "Mock support."
+            }
+          ],
+          explanation: "Mock explanation.",
+          riskFlags: []
+        }
+      ]
+    };
+
+    const html = renderHtmlReport(report);
+
+    expect(html).toContain('<a href="examples/notes%231%3F.md">Delimited source</a>');
+  });
+
   it("does not link evidence locations containing control characters", () => {
     const report: SourceLineReport = {
       schemaVersion: "1.0",

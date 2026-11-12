@@ -385,7 +385,13 @@ function formatSafeHref(value: string): string | undefined {
     return /[\s<>]/.test(trimmed) || !isCredentiallessHttpUrl(trimmed) ? undefined : trimmed;
   }
   if (!trimmed.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-    return trimmed.replace(/\\/g, "/").replace(/</g, "%3C").replace(/>/g, "%3E");
+    return trimmed
+      .replace(/\\/g, "/")
+      .replace(/%/g, "%25")
+      .replace(/</g, "%3C")
+      .replace(/>/g, "%3E")
+      .replace(/#/g, "%23")
+      .replace(/\?/g, "%3F");
   }
 
   return undefined;
