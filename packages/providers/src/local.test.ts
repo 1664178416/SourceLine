@@ -162,6 +162,30 @@ describe("createLocalSearchProvider", () => {
     }
   });
 
+  it.each([
+    ["note-a.md", "note_a.md"],
+    [`${"x".repeat(80)}a.md`, `${"x".repeat(80)}b.md`]
+  ])("keeps sources with colliding path slugs searchable: %s and %s", async (firstPath, secondPath) => {
+    const rootDir = join(tmpdir(), `sourceline-local-path-id-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(join(rootDir, firstPath), "Shared collision evidence marker.", "utf8");
+      await writeFile(join(rootDir, secondPath), "Shared collision evidence marker.", "utf8");
+
+      const request = { claimId: "claim-1", query: "Shared collision evidence marker", maxResults: 2 };
+      const results = await createLocalSearchProvider({ rootDir }).search(request);
+      const cachedResults = await createLocalSearchProvider({ rootDir }).search(request);
+
+      expect(results).toHaveLength(2);
+      expect(new Set(results.map((result) => result.id)).size).toBe(2);
+      expect(new Set(results.map((result) => result.path)).size).toBe(2);
+      expect(cachedResults.map((result) => result.id)).toEqual(results.map((result) => result.id));
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps Latin tokens when text mixes CJK and English without spaces", async () => {
     const rootDir = join(tmpdir(), `sourceline-local-mixed-script-1781067948639`);
     await mkdir(rootDir, { recursive: true });

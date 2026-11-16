@@ -1717,27 +1717,9 @@ function stableId(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
-  if (slug.length > 0 && !hasNonAscii(value)) {
-    return slug;
-  }
-
-  const hash = stableHash(normalized);
+  const hash = createHash("sha256").update(value).digest("hex").slice(0, 16);
   const prefix = slug.length > 0 ? slug.slice(0, Math.max(1, 80 - hash.length - 1)) : "source";
   return `${prefix}-${hash}`;
-}
-
-function hasNonAscii(value: string): boolean {
-  return /[^\u0000-\u007f]/.test(value);
-}
-
-function stableHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-
-  return hash.toString(36);
 }
 
 const STOP_WORDS = new Set([
