@@ -138,7 +138,7 @@ function formatSafeHref(value: string): string | undefined {
     return /[\s<>]/.test(trimmed) || !isCredentiallessHttpUrl(trimmed) ? undefined : trimmed;
   }
   if (!trimmed.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-    return trimmed;
+    return trimmed.replace(/%/g, "%25").replace(/#/g, "%23").replace(/\?/g, "%3F");
   }
 
   return undefined;

@@ -62,7 +62,11 @@ describe("renderMarkdownReport", () => {
     expect(renderMarkdownReport(report)).toContain("2/3 query terms matched.");
   });
 
-  it("wraps complex local evidence paths in safe Markdown link destinations", () => {
+  it.each([
+    ["examples/sources/Folder (draft)/local note.md", "examples/sources/Folder (draft)/local note.md"],
+    ["examples/sources/notes#1?.md", "examples/sources/notes%231%3F.md"],
+    ["examples/sources/notes%20draft.md", "examples/sources/notes%2520draft.md"]
+  ])("wraps complex local evidence paths in safe Markdown link destinations: %s", (path, destination) => {
     const report: SourceLineReport = {
       schemaVersion: "1.0",
       input: {
@@ -95,7 +99,7 @@ describe("renderMarkdownReport", () => {
               source: {
                 id: "source-1",
                 title: "Folder [draft] notes",
-                path: "examples/sources/Folder (draft)/local note.md",
+                path,
                 retrievedAt: "2026-06-07T00:00:00.000Z"
               },
               relation: "supports",
@@ -110,7 +114,7 @@ describe("renderMarkdownReport", () => {
     };
 
     expect(renderMarkdownReport(report)).toContain(
-      "[Folder \\[draft\\] notes](<examples/sources/Folder (draft)/local note.md>)"
+      `[Folder \\[draft\\] notes](<${destination}>)`
     );
   });
 
