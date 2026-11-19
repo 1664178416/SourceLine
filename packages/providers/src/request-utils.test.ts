@@ -28,6 +28,11 @@ describe("normalizeHttpBaseUrl", () => {
     }
   });
 
+  it.each(["?", "#", "?#"])("rejects empty query or fragment delimiters in base URLs: %s", (delimiter) => {
+    expect(() => normalizeHttpBaseUrl(`https://example.test/v1${delimiter}`, "baseUrl"))
+      .toThrow("baseUrl must be a valid http(s) URL.");
+  });
+
   it("rejects credentials in base URLs", () => {
     for (const value of ["https://user@example.test/v1", "https://user:secret@example.test/v1"]) {
       expect(() => normalizeHttpBaseUrl(value, "baseUrl")).toThrow("baseUrl must be a valid http(s) URL.");
