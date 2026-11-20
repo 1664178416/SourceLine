@@ -143,7 +143,7 @@ function parseOptionalHttpUrl(value: string | undefined, label: string): string 
   if (url.username.length > 0 || url.password.length > 0) {
     throw new Error(`${label} must be a valid http(s) URL.`);
   }
-  if (url.search.length > 0 || url.hash.length > 0) {
+  if (/[?#]/.test(url.href)) {
     throw new Error(`${label} must be a valid http(s) URL.`);
   }
 

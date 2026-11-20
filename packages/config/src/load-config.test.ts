@@ -441,6 +441,25 @@ describe("loadConfig", () => {
     }
   });
 
+  it.each(["?", "#", "?#"])("rejects empty base URL delimiters in config files: %s", async (delimiter) => {
+    const rootDir = join(tmpdir(), `sourceline-empty-base-url-delimiter-${Date.now()}`);
+    await mkdir(rootDir, { recursive: true });
+
+    try {
+      await writeFile(
+        join(rootDir, "sourceline.config.json"),
+        JSON.stringify({ llm: { baseUrl: `https://example.test/v1${delimiter}` } }),
+        "utf8"
+      );
+
+      await expect(loadConfig({ cwd: rootDir })).rejects.toThrow(
+        /llm\.baseUrl: Invalid URL: base URL must not include query strings or fragments/
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects LLM base URLs with query strings or fragments in config files", async () => {
     const rootDir = join(tmpdir(), `sourceline-query-base-url-config-${Date.now()}`);
     await mkdir(rootDir, { recursive: true });

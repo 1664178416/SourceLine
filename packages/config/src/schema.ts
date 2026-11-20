@@ -35,7 +35,7 @@ const httpUrlStringSchema = z
   }, "Invalid URL: base URL must not include username or password")
   .refine((value) => {
     const url = new URL(value);
-    return url.search.length === 0 && url.hash.length === 0;
+    return !/[?#]/.test(url.href);
   }, "Invalid URL: base URL must not include query strings or fragments");
 const positiveIntegerSchema = z.number().int().positive();
 const maxClaimsSchema = positiveIntegerSchema.max(MAX_CLAIMS);

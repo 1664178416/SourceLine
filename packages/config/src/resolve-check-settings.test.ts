@@ -186,6 +186,17 @@ describe("resolveCheckSettings", () => {
     ).toThrow("baseUrl must be a valid http(s) URL.");
   });
 
+  it.each(["?", "#", "?#"])("rejects empty base URL delimiters from all settings sources: %s", (delimiter) => {
+    const baseUrl = `https://example.test/v1${delimiter}`;
+    for (const options of [
+      { flags: { baseUrl }, env: {} },
+      { flags: {}, config: { llm: { baseUrl } }, env: {} },
+      { flags: {}, env: { OPENAI_BASE_URL: baseUrl } }
+    ]) {
+      expect(() => resolveCheckSettings(options)).toThrow("baseUrl must be a valid http(s) URL.");
+    }
+  });
+
   it("rejects overlong string settings before runtime use", () => {
     expect(() =>
       resolveCheckSettings({
